@@ -1,0 +1,22 @@
+# Edge Impulse Model Dependencies
+# Install with: pip install -r requirements-eim.txt
+
+# Core dependencies
+numpy>=1.21.0
+python-dateutil>=2.8.0
+
+# Edge Impulse SDK (for full model support)
+edge-impulse-linux-runner>=1.0.0
+
+# Optional: TensorFlow for model analysis
+tensorflow>=2.10.0
+
+# Optional: ONNX Runtime for ONNX models
+onnxruntime>=1.13.0
+
+# Optional: For image preprocessing
+pillow>=9.0.0
+opencv-python>=4.6.0
+
+# Optional: For better console output
+colorama>=0.4.4
