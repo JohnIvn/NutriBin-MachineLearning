@@ -45,37 +45,39 @@ val_ds = tf.keras.preprocessing.image_dataset_from_directory(
 
 num_classes = len(train_ds.class_names)
 
-# Data augmentation
+# Advanced data augmentation
 data_augmentation = tf.keras.Sequential([
-    layers.RandomFlip('horizontal'),
-    layers.RandomRotation(0.1),
-    layers.RandomZoom(0.1),
-    layers.RandomBrightness(0.1),
-    layers.RandomContrast(0.1)
+    layers.RandomFlip('horizontal_and_vertical'),
+    layers.RandomRotation(0.2),
+    layers.RandomZoom(0.2),
+    layers.RandomBrightness(0.2),
+    layers.RandomContrast(0.2),
+    layers.RandomTranslation(0.1, 0.1)
 ])
+
+# Transfer learning: MobileNetV2 (pretrained on ImageNet)
+base_model = tf.keras.applications.MobileNetV2(
+    input_shape=(img_height, img_width, 3),
+    include_top=False,
+    weights='imagenet'
+)
+base_model.trainable = False
 
 model = models.Sequential([
     layers.Rescaling(1./255, input_shape=(img_height, img_width, 3)),
     data_augmentation,
-    layers.Conv2D(32, 3, activation='relu'),
-    layers.MaxPooling2D(),
-    layers.Conv2D(64, 3, activation='relu'),
-    layers.MaxPooling2D(),
-    layers.Conv2D(128, 3, activation='relu'),
-    layers.MaxPooling2D(),
-    layers.Flatten(),
+    base_model,
+    layers.GlobalAveragePooling2D(),
     layers.Dropout(0.3),
     layers.Dense(128, activation='relu'),
     layers.Dropout(0.2),
     layers.Dense(num_classes, activation='softmax')
 ])
 
-
-model.compile(optimizer='adam',
+model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=1e-3),
               loss='sparse_categorical_crossentropy',
               metrics=['accuracy'])
 
-# Callbacks for better training
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
 callbacks = [
     EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True),
@@ -83,11 +85,27 @@ callbacks = [
     ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=3, min_lr=1e-6)
 ]
 
-
+# Phase 1: feature extraction
+print('\nPhase 1: feature extraction (training top layers)')
 history = model.fit(
     train_ds,
     validation_data=val_ds,
-    epochs=30,
+    epochs=20,
+    callbacks=callbacks
+)
+
+# Phase 2: fine-tuning - unfreeze last 20 layers of base model
+print('\nPhase 2: fine-tuning (unfreeze last 20 layers)')
+base_model.trainable = True
+for layer in base_model.layers[:-20]:
+    layer.trainable = False
+model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=1e-4),
+              loss='sparse_categorical_crossentropy',
+              metrics=['accuracy'])
+history_ft = model.fit(
+    train_ds,
+    validation_data=val_ds,
+    epochs=10,
     callbacks=callbacks
 )
 

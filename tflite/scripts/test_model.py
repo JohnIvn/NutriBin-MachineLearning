@@ -27,11 +27,22 @@ def mean_average_precision(pred_boxes, gt_boxes, iou_threshold=0.5):
 
 # Load model and class indices
 import os
-output_dir = '../outputs'
-model = tf.keras.models.load_model(os.path.join(output_dir, 'my_model.keras'))
-with open(os.path.join(output_dir, 'class_indices.json'), 'r') as f:
-    class_indices = json.load(f)
-    class_names = {v: k for k, v in class_indices.items()}
+OUTPUT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '../outputs'))
+best_path = os.path.join(OUTPUT_DIR, 'best_model.keras')
+fallback_path = os.path.join(OUTPUT_DIR, 'my_model.keras')
+model_path = best_path if os.path.exists(best_path) else fallback_path
+if not os.path.exists(model_path):
+    raise FileNotFoundError(f'No saved model found. Checked: {best_path} and {fallback_path}')
+print(f'Loading model: {model_path}')
+model = tf.keras.models.load_model(model_path)
+class_indices_path = os.path.join(OUTPUT_DIR, 'class_indices.json')
+if os.path.exists(class_indices_path):
+    with open(class_indices_path, 'r') as f:
+        class_indices = json.load(f)
+    # invert mapping: index -> class_name
+    class_names = {int(v): k for k, v in class_indices.items()}
+else:
+    class_names = None
 
 def predict(img_path):
     img = image.load_img(img_path, target_size=(180, 180))
@@ -40,16 +51,25 @@ def predict(img_path):
     x = x / 255.0
     preds = model.predict(x)
     pred_class = np.argmax(preds, axis=1)[0]
-    return class_names[pred_class]
+    if class_names and pred_class in class_names:
+        return class_names[pred_class]
+    return int(pred_class)
 
 # Test on a folder of images and print metrics
-if __name__ == '__main__':
-    import sys
+def run_evaluation_for_model(test_dir, model_path, label):
+    global model, class_names
+    print(f"\nEvaluating model '{label}' from {model_path}")
+    model = tf.keras.models.load_model(model_path)
+    # load class names if available
+    class_indices_path = os.path.join(OUTPUT_DIR, 'class_indices.json')
+    if os.path.exists(class_indices_path):
+        with open(class_indices_path, 'r') as f:
+            class_indices = json.load(f)
+            class_names = {int(v): k for k, v in class_indices.items()}
+    else:
+        class_names = None
+
     from glob import glob
-    test_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../data/test'))
-    if len(sys.argv) >= 2 and os.path.isdir(sys.argv[1]):
-        test_dir = sys.argv[1]
-    print(f"Testing on directory: {test_dir}")
     y_true, y_pred = [], []
     img_paths = []
     found_class_folders = False
@@ -87,10 +107,23 @@ if __name__ == '__main__':
         else:
             print("No test images found in the test directory.")
 
-    # Object detection metrics placeholder
-    # If you have bounding box predictions and ground truth, compute IoU and mAP here
-    # Example:
-    # pred_boxes = ...
-    # gt_boxes = ...
-    # mAP = mean_average_precision(pred_boxes, gt_boxes)
-    # print(f"mAP: {mAP:.4f}")
+
+if __name__ == '__main__':
+    import sys
+    test_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../data/test'))
+    if len(sys.argv) >= 2 and os.path.isdir(sys.argv[1]):
+        test_dir = sys.argv[1]
+    print(f"Testing on directory: {test_dir}")
+    if not os.path.isdir(test_dir):
+        print('Test directory not found:', test_dir)
+        sys.exit(1)
+    # determine available models
+    candidates = []
+    if os.path.exists(os.path.join(OUTPUT_DIR, 'best_model.keras')):
+        candidates.append(('best_model', os.path.join(OUTPUT_DIR, 'best_model.keras')))
+    if os.path.exists(os.path.join(OUTPUT_DIR, 'my_model.keras')):
+        candidates.append(('final_model', os.path.join(OUTPUT_DIR, 'my_model.keras')))
+    if not candidates:
+        raise FileNotFoundError('No saved models found to evaluate')
+    for label, path in candidates:
+        run_evaluation_for_model(test_dir, path, label)
