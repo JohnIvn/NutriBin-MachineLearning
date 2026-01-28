@@ -44,8 +44,19 @@ val_ds = tf.keras.preprocessing.image_dataset_from_directory(
 )
 
 num_classes = len(train_ds.class_names)
+
+# Data augmentation
+data_augmentation = tf.keras.Sequential([
+    layers.RandomFlip('horizontal'),
+    layers.RandomRotation(0.1),
+    layers.RandomZoom(0.1),
+    layers.RandomBrightness(0.1),
+    layers.RandomContrast(0.1)
+])
+
 model = models.Sequential([
     layers.Rescaling(1./255, input_shape=(img_height, img_width, 3)),
+    data_augmentation,
     layers.Conv2D(32, 3, activation='relu'),
     layers.MaxPooling2D(),
     layers.Conv2D(64, 3, activation='relu'),
@@ -53,22 +64,39 @@ model = models.Sequential([
     layers.Conv2D(128, 3, activation='relu'),
     layers.MaxPooling2D(),
     layers.Flatten(),
+    layers.Dropout(0.3),
     layers.Dense(128, activation='relu'),
+    layers.Dropout(0.2),
     layers.Dense(num_classes, activation='softmax')
 ])
+
 
 model.compile(optimizer='adam',
               loss='sparse_categorical_crossentropy',
               metrics=['accuracy'])
 
+# Callbacks for better training
+from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
+callbacks = [
+    EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True),
+    ModelCheckpoint(os.path.join(output_dir, 'best_model.keras'), monitor='val_loss', save_best_only=True),
+    ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=3, min_lr=1e-6)
+]
+
+
 history = model.fit(
     train_ds,
     validation_data=val_ds,
-    epochs=10
+    epochs=30,
+    callbacks=callbacks
 )
 
 model.save(os.path.join(output_dir, 'my_model.keras'))
 print(f"Model saved to {os.path.join(output_dir, 'my_model.keras')}")
+
+print(f"Best model saved to {os.path.join(output_dir, 'best_model.keras')}")
+print(f"Best validation accuracy: {max(history.history['val_accuracy']):.4f}")
+print(f"Best validation loss: {min(history.history['val_loss']):.4f}")
 
 # --- Training summary and metrics ---
 
