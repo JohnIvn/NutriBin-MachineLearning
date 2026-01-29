@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>NutriBin ML - Camera Test</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 1rem;
+      }
+      video,
+      canvas {
+        max-width: 640px;
+        width: 100%;
+        border: 1px solid #ccc;
+      }
+      #results {
+        margin-top: 1rem;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>NutriBin ML — Camera Test</h1>
+    <div id="modelStatus" style="margin-bottom: 0.5rem; color: #444">
+      Model: loading...
+    </div>
+    <video id="video" autoplay playsinline></video>
+    <div>
+      <button id="enableCamera">Enable Camera</button>
+      <button id="disableCamera" style="display: none">Disable Camera</button>
+      <button id="capture">Capture & Send</button>
+      <button id="reloadModel" style="margin-left: 0.5rem">Reload Model</button>
+    </div>
+    <div style="margin-top: 0.5rem">
+      <input type="file" id="fileInput" accept="image/*" />
+      <button id="upload">Upload & Send</button>
+    </div>
+    <canvas id="canvas" style="display: none"></canvas>
+
+    <div id="results">
+      <h3>Predictions</h3>
+      <pre id="json"></pre>
+      <h3>Statistics</h3>
+      <pre id="stats"></pre>
+      <h3>Raw Debug</h3>
+      <pre id="rawdebug"></pre>
+      <h3>Annotated</h3>
+      <img id="annotated" alt="Annotated result" />
+    </div>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
