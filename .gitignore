@@ -1,3 +1,9 @@
 tflite/data
 tflite/outputs
 tflite/saved_model
+
+yolo/data
+yolo/outputs
+yolo/saved_model
+yolo/scripts/runs
+yolo/scripts/yolov8n.pt
