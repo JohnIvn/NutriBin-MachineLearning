@@ -99,9 +99,24 @@ def main():
         print(' -', REPO_ROOT / 'tflite' / 'data' / 'test')
         return
 
-    save_dir = OUTPUT_DIR / 'detections'
+    # When saving detections, create a numbered folder (detection_1, detection_2, ...)
+    # to avoid overwriting previous runs. If not saving, use a temporary folder.
+    base_detections = OUTPUT_DIR / 'detections'
     if args.save:
-        save_dir.mkdir(parents=True, exist_ok=True)
+        base_detections.mkdir(parents=True, exist_ok=True)
+        # find next available index
+        existing = [p.name for p in base_detections.iterdir() if p.is_dir() and p.name.startswith('detection_')]
+        max_index = 0
+        for name in existing:
+            try:
+                idx = int(name.split('_', 1)[1])
+                if idx > max_index:
+                    max_index = idx
+            except Exception:
+                continue
+        next_idx = max_index + 1
+        save_dir = base_detections / f'detection_{next_idx}'
+        save_dir.mkdir(parents=True, exist_ok=False)
     else:
         # create a temporary folder to store results then clean up
         save_dir = OUTPUT_DIR / 'detections_temp'
