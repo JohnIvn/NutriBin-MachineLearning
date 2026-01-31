@@ -1,9 +1,10 @@
 # NutriBin — Machine Learning
+
 <img width="936" height="328" alt="image" src="https://github.com/user-attachments/assets/6c962171-3add-41db-a3ba-0d2597b2c2d6" />
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![Project Status](https://img.shields.io/badge/status-Experimental-orange.svg)](#)
 
-An opinionated repository for object detection and classification experiments used by the NutriBin project — includes YOLO training 
+An opinionated repository for object detection and classification experiments used by the NutriBin project — includes YOLO training
 & detection pipelines, TensorFlow/TFLite model artifacts, helper scripts, and a minimal web demo.
 
 --
@@ -60,6 +61,18 @@ python yolo/scripts/test_model.py \
 ```
 
 Outputs (weights and csv results) are written to `yolo/outputs/`.
+
+Upgrade (continue training) an existing YOLO `.pt` from another user:
+
+```bash
+# continue training from a shared weights file
+python yolo/scripts/upgrade_model.py \
+  --base-weights yolo/outputs/yolo_training/weights/best.pt \
+  --epochs 10 --imgsz 640 --batch 8
+
+# auto-create YOLO dataset from `yolo/data/images/<class_name>/` then upgrade
+python yolo/scripts/upgrade_model.py --base-weights path/to/shared.pt --auto-create
+```
 
 ## TFLite / Classification
 
