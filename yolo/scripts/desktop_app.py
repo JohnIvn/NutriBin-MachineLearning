@@ -555,6 +555,14 @@ class DesktopApp:
         # Strip ANSI codes from the message
         clean_message = self.strip_ansi_codes(str(message))
         
+        # Skip empty lines and progress bar artifacts
+        if not clean_message.strip():
+            self.output_text.config(state=tk.DISABLED)
+            return
+        
+        # Detect if it's an epoch result line (contains metrics)
+        is_epoch_result = "Epoch" in clean_message and ("box_loss" in clean_message or "mAP" in clean_message)
+        
         # Add icon based on tag
         icon = ""
         if tag == "error":
@@ -567,13 +575,27 @@ class DesktopApp:
             icon = "ℹ️ "
         elif tag == "header":
             icon = "🚀"
+        elif is_epoch_result:
+            icon = "📊"
         
         log_msg = f"{icon} [{timestamp}] {clean_message}\n" if icon else f"   [{timestamp}] {clean_message}\n"
+        
+        # Add extra spacing for epoch results
+        if is_epoch_result and not tag:
+            log_msg = f"\n{log_msg}"
         
         if tag:
             self.output_text.insert(tk.END, log_msg, tag)
         else:
-            self.output_text.insert(tk.END, log_msg)
+            # Auto-detect severity from message content
+            if "error" in clean_message.lower():
+                self.output_text.insert(tk.END, log_msg, "error")
+            elif "warning" in clean_message.lower():
+                self.output_text.insert(tk.END, log_msg, "warning")
+            elif "success" in clean_message.lower() or "completed" in clean_message.lower():
+                self.output_text.insert(tk.END, log_msg, "success")
+            else:
+                self.output_text.insert(tk.END, log_msg)
         
         # Update line count
         line_count = int(self.output_text.index('end-1c').split('.')[0])
