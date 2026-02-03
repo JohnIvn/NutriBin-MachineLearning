@@ -7,3 +7,5 @@ yolo/outputs
 yolo/saved_model
 yolo/scripts/runs
 yolo/scripts/yolov8n.pt
+
+yolov8n.pt
