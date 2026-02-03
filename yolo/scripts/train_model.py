@@ -11,6 +11,8 @@ Usage:
 
 from pathlib import Path
 import argparse
+from datetime import datetime
+import shutil
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -38,17 +40,41 @@ def main():
         return
 
     OUTPUT_DIR.mkdir(exist_ok=True)
+    
+    # Generate timestamp for unique filenames
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    
     # Start from a small pretrained backbone; Ultralytics will download if needed
     model = YOLO('yolov8n.pt')
-    model.train(
+    results = model.train(
         data=str(DATA_YAML),
         epochs=args.epochs,
         imgsz=args.imgsz,
         batch=args.batch,
         project=str(OUTPUT_DIR),
-        name='yolo_training',
-        exist_ok=True,
+        name=f'yolo_training_{timestamp}',
+        exist_ok=False,
     )
+    
+    # Copy the best and last weights with timestamp
+    if results:
+        training_dir = OUTPUT_DIR / f'yolo_training_{timestamp}'
+        weights_dir = training_dir / 'weights'
+        
+        if weights_dir.exists():
+            best_src = weights_dir / 'best.pt'
+            last_src = weights_dir / 'last.pt'
+            
+            best_dst = OUTPUT_DIR / f'{timestamp}_best.pt'
+            last_dst = OUTPUT_DIR / f'{timestamp}_last.pt'
+            
+            if best_src.exists():
+                shutil.copy2(best_src, best_dst)
+                print(f'Saved best model: {best_dst}')
+            
+            if last_src.exists():
+                shutil.copy2(last_src, last_dst)
+                print(f'Saved last model: {last_dst}')
 
 
 if __name__ == '__main__':
