@@ -14,6 +14,8 @@ from datetime import datetime
 import os
 import re
 from PIL import Image, ImageTk
+import cv2
+import numpy as np
 
 
 class ParametersDialog(tk.Toplevel):
@@ -166,6 +168,25 @@ class ParametersDialog(tk.Toplevel):
                                "Batch size for training (default: 8)")
             self.add_device_field(scrollable_frame, "Device", "device", "auto", 
                                 "GPU/CPU selection (default: auto)")
+        
+        elif self.script_name == "live_test.py":
+            self.add_section_title(scrollable_frame, "Model & Camera")
+            self.add_model_path_field(scrollable_frame, "Model Path", "model", "best.pt",
+                                     "Path to model weights file")
+            self.add_param_field(scrollable_frame, "Camera ID", "camera", "0",
+                               "Camera device ID (default: 0 for webcam)")
+            
+            self.add_section_title(scrollable_frame, "Detection Settings")
+            self.add_param_field(scrollable_frame, "Image Size", "imgsz", "640", 
+                               "Input image resolution (default: 640)")
+            self.add_param_field(scrollable_frame, "Confidence", "conf", "0.25", 
+                               "Detection confidence threshold (default: 0.25)")
+            self.add_device_field(scrollable_frame, "Device", "device", "auto", 
+                                "GPU/CPU selection (default: auto)")
+            
+            self.add_section_title(scrollable_frame, "Tips")
+            self.add_info_label(scrollable_frame,
+                              "Press 'q' to quit\nPress 's' to save snapshot")
         
         # Footer with buttons
         footer = tk.Frame(self, bg="#f5f5f5", height=60)
@@ -361,6 +382,9 @@ class DesktopApp:
         # Process tracking
         self.current_process = None
         self.is_running = False
+        self.camera_active = False
+        self.output_container = None
+        self.output_text = None
         
         # Parameters storage
         self.params = {}
@@ -396,7 +420,7 @@ class DesktopApp:
         try:
             logo_path = self.yolo_root / 'public' / 'logo.png'
             print(f"Looking for logo at: {logo_path}")
-            print(f"Logo exists: {logo_path.exists()}")
+            # print(f"Logo exists: {logo_path.exists()}")
             if logo_path.exists():
                 logo_img = Image.open(str(logo_path))
                 logo_img = logo_img.resize((60, 73), Image.Resampling.LANCZOS)
@@ -463,22 +487,55 @@ class DesktopApp:
         self.setup_output_panel(right_panel)
     
     def setup_script_cards(self, parent):
-        """Setup script execution cards"""
+        """Setup script execution cards with scrolling"""
         # Title
         title = tk.Label(parent, text="Workflow Steps", font=("Arial", 12, "bold"), 
                         fg=self.text_dark, bg=self.bg_color)
         title.pack(anchor=tk.W, pady=(0, 15))
+        
+        # Create scrollable container
+        canvas = tk.Canvas(parent, bg=self.bg_color, highlightthickness=0, width=230)
+        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas, bg=self.bg_color)
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas_window = canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # Mouse wheel scrolling
+        def on_mousewheel(event):
+            canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        
+        canvas.bind_all("<MouseWheel>", on_mousewheel)
+        
+        def on_enter(event):
+            canvas.bind_all("<MouseWheel>", on_mousewheel)
+        
+        def on_leave(event):
+            canvas.unbind_all("<MouseWheel>")
+        
+        canvas.bind("<Enter>", on_enter)
+        canvas.bind("<Leave>", on_leave)
+        
+        # Pack canvas and scrollbar
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
         # Scripts info
         scripts = [
             ("1. Create Dataset", "create_dataset.py", "Convert image folders\nto YOLO format", "📁"),
             ("2. Train Model", "train_model.py", "Train a new YOLO\ndetection model", "📈"),
             ("3. Test Model", "test_model.py", "Run inference on\ntest images", "🔍"),
-            ("4. Upgrade Model", "upgrade_model.py", "Continue training\nexisting weights", "⬆️")
+            ("4. Upgrade Model", "upgrade_model.py", "Continue training\nexisting weights", "⬆️"),
+            ("5. Live Detection", "live_test.py", "Real-time detection\nwith webcam", "📹"),
         ]
         
         for title_text, script, desc, icon in scripts:
-            self.create_script_card(parent, title_text, script, desc, icon)
+            self.create_script_card(scrollable_frame, title_text, script, desc, icon)
     
     def create_script_card(self, parent, title, script, description, icon):
         """Create a script execution card"""
@@ -533,7 +590,7 @@ class DesktopApp:
             widget.bind("<Button-1>", lambda e, s=script: self.run_script(s))
     
     def setup_output_panel(self, parent):
-        """Setup the right output panel"""
+        """Setup the right output panel with camera preview option"""
         # Header with console title and stats
         header_frame = tk.Frame(parent, bg=self.bg_color)
         header_frame.pack(fill=tk.X, pady=(0, 10))
@@ -545,6 +602,19 @@ class DesktopApp:
         self.line_count_label = tk.Label(header_frame, text="Lines: 0", 
                                         font=("Arial", 9), fg=self.text_light, bg=self.bg_color)
         self.line_count_label.pack(side=tk.RIGHT, padx=10)
+        
+        # Main output container - will switch between console and camera
+        self.output_container = tk.Frame(parent, bg=self.bg_color)
+        self.output_container.pack(fill=tk.BOTH, expand=True)
+        
+        # Setup console output
+        self.setup_console_output(self.output_container)
+    
+    def setup_console_output(self, parent):
+        """Setup the console text output"""
+        # Clear the container
+        for widget in parent.winfo_children():
+            widget.destroy()
         
         # Output text area with scrollbar
         output_frame = tk.Frame(parent, bg="#0d1117", relief=tk.SUNKEN, bd=2)
@@ -572,8 +642,50 @@ class DesktopApp:
         self.output_text.tag_config("header", foreground="#79c0ff", font=("Consolas", 10, "bold"))
         self.output_text.tag_config("separator", foreground="#30363d")
     
+    def setup_camera_preview(self, parent, camera_id=0, model_path=None):
+        """Setup camera preview panel"""
+        # Clear the container
+        for widget in parent.winfo_children():
+            widget.destroy()
+        
+        # Camera frame
+        camera_frame = tk.Frame(parent, bg="#000000", relief=tk.SUNKEN, bd=2)
+        camera_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Canvas for camera display
+        self.camera_canvas = tk.Canvas(camera_frame, bg="#000000", highlightthickness=0)
+        self.camera_canvas.pack(fill=tk.BOTH, expand=True)
+        
+        # Info panel at bottom
+        info_frame = tk.Frame(camera_frame, bg="#1a1a1a", height=40)
+        info_frame.pack(fill=tk.X, side=tk.BOTTOM)
+        info_frame.pack_propagate(False)
+        
+        self.camera_info_label = tk.Label(info_frame, text="📹 Camera: Starting...", 
+                                         font=("Arial", 9), fg="#4CAF50", bg="#1a1a1a")
+        self.camera_info_label.pack(anchor=tk.W, padx=10, pady=8)
+        
+        # Start camera capture thread
+        self.camera_active = True
+        self.camera_thread = threading.Thread(
+            target=self._camera_capture_loop,
+            args=(camera_id, model_path)
+        )
+        self.camera_thread.daemon = True
+        self.camera_thread.start()
+    
     def log_output(self, message, tag=""):
         """Log message to output panel with pretty formatting"""
+        # Check if output_text exists and is valid
+        if not hasattr(self, 'output_text') or self.output_text is None:
+            return
+        
+        try:
+            if not self.output_text.winfo_exists():
+                return
+        except:
+            return
+        
         self.output_text.config(state=tk.NORMAL)
         timestamp = datetime.now().strftime("%H:%M:%S")
         
@@ -668,6 +780,13 @@ class DesktopApp:
         # Extract parameters from dialog
         params = dialog.result
         
+        # Always ensure console output is ready
+        try:
+            if self.output_text is None or not self.output_text.winfo_exists():
+                self.setup_console_output(self.output_container)
+        except:
+            self.setup_console_output(self.output_container)
+        
         self.clear_output()
         
         # Pretty header
@@ -712,6 +831,24 @@ class DesktopApp:
             if params.get("auto_create", True):
                 cmd.append("--auto-create")
             self.log_output(f"⬆️  Parameters: --epochs {params.get('epochs', '10')} --imgsz {params.get('imgsz', '640')} --batch {params.get('batch', '8')}", "info")
+        
+        elif script_name == "live_test.py":
+            if params.get("model"):
+                cmd.extend(["--model", params.get("model")])
+            cmd.extend([
+                "--imgsz", params.get("imgsz", "640"),
+                "--conf", params.get("conf", "0.25"),
+                "--device", params.get("device", "auto"),
+                "--camera", params.get("camera", "0")
+            ])
+            self.log_output(f"📹 Parameters: --imgsz {params.get('imgsz', '640')} --conf {params.get('conf', '0.25')} --camera {params.get('camera', '0')}", "info")
+            
+            # Show camera preview instead of console for live detection
+            self.setup_camera_preview(
+                self.output_container,
+                camera_id=int(params.get("camera", "0")),
+                model_path=params.get("model")
+            )
         
         elif script_name == "create_dataset.py":
             self.log_output("📁 Creating dataset from image folders...", "info")
@@ -787,21 +924,200 @@ class DesktopApp:
     
     def stop_process(self):
         """Stop the current process"""
+        # Stop camera if active
+        if hasattr(self, 'camera_active'):
+            self.camera_active = False
+            # Give thread time to stop
+            self.root.after(500)
+        
         if self.current_process and self.is_running:
             try:
-                self.log_output("Stopping process...", "warning")
+                if hasattr(self, 'output_text') and self.output_text and self.output_text.winfo_exists():
+                    self.log_output("Stopping process...", "warning")
                 self.current_process.terminate()
                 self.current_process.wait(timeout=5)
-                self.log_output("Process stopped.", "warning")
+                if hasattr(self, 'output_text') and self.output_text and self.output_text.winfo_exists():
+                    self.log_output("Process stopped.", "warning")
             except Exception as e:
-                self.log_output(f"Error stopping process: {e}", "error")
+                if hasattr(self, 'output_text') and self.output_text and self.output_text.winfo_exists():
+                    self.log_output(f"Error stopping process: {e}", "error")
                 try:
                     self.current_process.kill()
                 except:
                     pass
             finally:
+                self.current_process = None
                 self.is_running = False
                 self.stop_btn.config(state=tk.DISABLED)
+    
+    def _camera_capture_loop(self, camera_id, model_path):
+        """Capture camera frames and display with YOLO detections"""
+        import time
+        cap = None
+        try:
+            # Import YOLO
+            from ultralytics import YOLO
+            
+            # Load model
+            if model_path and str(model_path) != "best.pt":
+                model = YOLO(str(model_path))
+            else:
+                # Find latest model
+                weights_dir = self.yolo_root / 'outputs'
+                timestamped_models = sorted(weights_dir.glob('*_best.pt'), reverse=True)
+                if timestamped_models:
+                    model = YOLO(str(timestamped_models[0]))
+                else:
+                    default_model = weights_dir / 'yolo_training' / 'weights' / 'best.pt'
+                    if default_model.exists():
+                        model = YOLO(str(default_model))
+                    else:
+                        if hasattr(self, 'camera_info_label'):
+                            self.camera_info_label.config(text="❌ No model found!")
+                        return
+            
+            # Open camera
+            cap = cv2.VideoCapture(camera_id)
+            time.sleep(1)  # Wait for camera to initialize
+            
+            if not cap.isOpened():
+                if hasattr(self, 'camera_info_label'):
+                    self.camera_info_label.config(text=f"❌ Cannot open camera {camera_id}")
+                return
+            
+            # Set camera properties
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            cap.set(cv2.CAP_PROP_FPS, 30)
+            
+            frame_count = 0
+            detection_count = 0
+            display_frame_skip = 0  # Skip every other frame for performance
+            
+            # Store photo reference
+            self._current_photo = None
+            self._camera_image_id = None
+            
+            if hasattr(self, 'camera_info_label'):
+                self.camera_info_label.config(text="📹 Camera: Initializing...")
+            
+            # Warm up camera with 5 frames
+            for _ in range(5):
+                ret, _ = cap.read()
+                if ret:
+                    break
+            
+            while self.camera_active and self.is_running:
+                ret, frame = cap.read()
+                if not ret or frame is None or frame.size == 0:
+                    continue
+                
+                frame_count += 1
+                
+                try:
+                    # Run YOLO detection on every frame
+                    results = model(frame, verbose=False)
+                    
+                    # Count detections
+                    if results[0].boxes:
+                        detection_count += len(results[0].boxes)
+                    
+                    # Draw results
+                    annotated_frame = results[0].plot()
+                    
+                    if annotated_frame is None or annotated_frame.size == 0:
+                        continue
+                    
+                    # Convert BGR to RGB
+                    frame_rgb = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
+                    
+                    # Get valid canvas size
+                    try:
+                        canvas_w = self.camera_canvas.winfo_width()
+                        canvas_h = self.camera_canvas.winfo_height()
+                        if canvas_w < 50 or canvas_h < 50:
+                            continue
+                    except:
+                        break
+                    
+                    # Resize frame to fit canvas
+                    h, w = frame_rgb.shape[:2]
+                    if h > 0 and w > 0:
+                        scale = min(canvas_w / w, canvas_h / h, 1.0)
+                        new_w = int(w * scale)
+                        new_h = int(h * scale)
+                        if new_w > 0 and new_h > 0:
+                            frame_rgb = cv2.resize(frame_rgb, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+                    
+                    # Convert to PIL and display
+                    try:
+                        pil_image = Image.fromarray(frame_rgb)
+                        self._current_photo = ImageTk.PhotoImage(pil_image)
+                        
+                        # Calculate center position
+                        img_w = pil_image.width
+                        img_h = pil_image.height
+                        center_x = canvas_w // 2
+                        center_y = canvas_h // 2
+                        
+                        # Create or update image on canvas
+                        if self._camera_image_id is None:
+                            self._camera_image_id = self.camera_canvas.create_image(
+                                center_x, center_y, image=self._current_photo, anchor=tk.CENTER
+                            )
+                        else:
+                            try:
+                                self.camera_canvas.itemconfig(self._camera_image_id, image=self._current_photo)
+                                self.camera_canvas.coords(self._camera_image_id, center_x, center_y)
+                            except:
+                                # Canvas item was deleted, recreate
+                                self._camera_image_id = self.camera_canvas.create_image(
+                                    center_x, center_y, image=self._current_photo, anchor=tk.CENTER
+                                )
+                        
+                        # Update status
+                        if hasattr(self, 'camera_info_label'):
+                            try:
+                                self.camera_info_label.config(
+                                    text=f"📹 Camera: {frame_count} frames | 🎯 Detections: {detection_count}"
+                                )
+                            except:
+                                pass
+                        
+                        # Force GUI update
+                        try:
+                            self.camera_canvas.update()
+                        except:
+                            break
+                    
+                    except Exception as e:
+                        # Image error - skip frame
+                        continue
+                
+                except Exception as e:
+                    # Detection error - skip frame
+                    continue
+            
+            # Cleanup
+            if cap:
+                cap.release()
+            
+            if hasattr(self, 'camera_info_label'):
+                try:
+                    self.camera_info_label.config(text="📹 Camera: Stopped")
+                except:
+                    pass
+        
+        except Exception as e:
+            if hasattr(self, 'camera_info_label'):
+                try:
+                    self.camera_info_label.config(text=f"❌ Error: {str(e)[:35]}")
+                except:
+                    pass
+        finally:
+            if cap:
+                cap.release()
 
 
 def main():
