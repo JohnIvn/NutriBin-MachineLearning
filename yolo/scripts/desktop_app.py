@@ -13,6 +13,7 @@ import json
 from datetime import datetime
 import os
 import re
+from PIL import Image, ImageTk
 
 
 class ParametersDialog(tk.Toplevel):
@@ -338,15 +339,17 @@ class DesktopApp:
     def __init__(self, root):
         self.root = root
         self.root.title("NutriBin ML - YOLO Model Manager")
-        self.root.geometry("1100x700")
+        self.root.geometry("1400x900")
         self.root.resizable(True, True)
         
-        # Set color scheme
-        self.bg_color = "#f0f0f0"
-        self.fg_color = "#333333"
-        self.accent_color = "#4CAF50"
-        self.warning_color = "#FF9800"
-        self.error_color = "#F44336"
+        # Professional color scheme
+        self.bg_color = "#f5ede0"  # Cream beige like NutriBin
+        self.header_color = "#2E7D32"  # Deep green
+        self.accent_color = "#4CAF50"  # Light green
+        self.card_color = "#ffffff"
+        self.text_dark = "#333333"
+        self.text_light = "#666666"
+        self.border_color = "#e0d5c7"
         
         self.root.configure(bg=self.bg_color)
         
@@ -363,162 +366,184 @@ class DesktopApp:
         self.params = {}
         
         self.setup_ui()
-        
+    
     def setup_ui(self):
         """Setup the main UI layout"""
-        # Create main container
-        main_container = ttk.Frame(self.root)
-        main_container.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        # Header with logo and title
+        self.setup_header()
         
-        # Title
-        title_frame = ttk.Frame(main_container)
-        title_frame.pack(fill=tk.X, pady=(0, 15))
+        # Main content area
+        main_container = tk.Frame(self.root, bg=self.bg_color)
+        main_container.pack(fill=tk.BOTH, expand=True, padx=0, pady=0)
         
-        title = ttk.Label(title_frame, text="NutriBin ML - YOLO Workflow Manager", 
-                         font=("Arial", 16, "bold"))
-        title.pack(side=tk.LEFT)
+        # Content with script cards and output
+        self.setup_content(main_container)
+    
+    def setup_header(self):
+        """Setup header with NutriBin branding"""
+        header = tk.Frame(self.root, bg=self.header_color, height=90)
+        header.pack(fill=tk.X, side=tk.TOP)
+        header.pack_propagate(False)
+        
+        # Header content
+        header_content = tk.Frame(header, bg=self.header_color)
+        header_content.pack(fill=tk.BOTH, expand=True, padx=30, pady=12)
+        
+        # Logo area with actual image
+        logo_frame = tk.Frame(header_content, bg=self.header_color)
+        logo_frame.pack(side=tk.LEFT, anchor=tk.CENTER, padx=(0, 20))
+        
+        try:
+            logo_path = self.yolo_root / 'public' / 'logo.png'
+            print(f"Looking for logo at: {logo_path}")
+            print(f"Logo exists: {logo_path.exists()}")
+            if logo_path.exists():
+                logo_img = Image.open(str(logo_path))
+                logo_img = logo_img.resize((60, 73), Image.Resampling.LANCZOS)
+                self.logo_photo = ImageTk.PhotoImage(logo_img)
+                logo_label = tk.Label(logo_frame, image=self.logo_photo, bg=self.header_color)
+                logo_label.pack()
+            else:
+                raise FileNotFoundError(f"Logo not found at {logo_path}")
+        except Exception as e:
+            print(f"Error loading logo: {e}")
+            # Fallback to emoji if image loading fails
+            logo_text = tk.Label(logo_frame, text="🥬", font=("Arial", 32), bg=self.header_color)
+            logo_text.pack()
+        
+        title_frame = tk.Frame(header_content, bg=self.header_color)
+        title_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        title = tk.Label(title_frame, text="NutriBin ML", font=("Arial", 22, "bold"), 
+                        fg="white", bg=self.header_color)
+        title.pack(anchor=tk.W)
+        
+        subtitle = tk.Label(title_frame, text="YOLO Model Manager — Unexpected Features 2026", 
+                           font=("Arial", 9), fg="#c8e6c9", bg=self.header_color)
+        subtitle.pack(anchor=tk.W, pady=(3, 0))
+        
+        # Right side - Status and Stop button
+        right_frame = tk.Frame(header_content, bg=self.header_color)
+        right_frame.pack(side=tk.RIGHT, anchor=tk.CENTER, padx=(20, 0))
         
         # Status indicator
-        self.status_label = ttk.Label(title_frame, text="● Ready", 
-                                     font=("Arial", 10), foreground="#4CAF50")
-        self.status_label.pack(side=tk.RIGHT)
+        self.status_label = tk.Label(right_frame, text="● Ready", 
+                                    font=("Arial", 10, "bold"), fg="#c8e6c9", bg=self.header_color)
+        self.status_label.pack(pady=(0, 8))
         
-        # Main content: left (buttons) and right (output)
-        content_frame = ttk.Frame(main_container)
-        content_frame.pack(fill=tk.BOTH, expand=True)
+        # Stop button
+        self.stop_btn = tk.Button(right_frame, text="⏹  Stop Process", width=16,
+                                bg=self.accent_color, fg="white", font=("Arial", 9, "bold"),
+                                relief=tk.FLAT, cursor="hand2",
+                                command=self.stop_process, state=tk.DISABLED,
+                                activebackground="#45a049", activeforeground="white",
+                                disabledforeground="#999999")
+        self.stop_btn.pack()
         
-        # Left panel - Script buttons
-        left_panel = ttk.Frame(content_frame)
-        left_panel.pack(side=tk.LEFT, fill=tk.BOTH, padx=(0, 10))
+        # Store original button color for later state changes
+        self.stop_btn_normal_color = self.accent_color
+        self.stop_btn_active_color = "#45a049"
+    
+    def setup_content(self, parent):
+        """Setup main content area"""
+        # Create notebook-like layout with script cards on left, output on right
+        content = tk.Frame(parent, bg=self.bg_color)
+        content.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
         
-        self.setup_button_panel(left_panel)
+        # Left panel - Script cards
+        left_panel = tk.Frame(content, bg=self.bg_color)
+        left_panel.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 15))
+        
+        self.setup_script_cards(left_panel)
         
         # Right panel - Output console
-        right_panel = ttk.Frame(content_frame)
+        right_panel = tk.Frame(content, bg=self.bg_color)
         right_panel.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
         
         self.setup_output_panel(right_panel)
-        
-        # Footer
-        footer_frame = ttk.Frame(main_container)
-        footer_frame.pack(fill=tk.X, pady=(15, 0), side=tk.BOTTOM)
-        
-        ttk.Separator(main_container, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=(10, 0))
-        
-        self.info_label = ttk.Label(footer_frame, text="Ready", 
-                                   font=("Arial", 9), foreground="#666666")
-        self.info_label.pack(side=tk.LEFT)
-        
-        clear_btn = ttk.Button(footer_frame, text="Clear Output", 
-                             command=self.clear_output)
-        clear_btn.pack(side=tk.RIGHT, padx=5)
     
-    def setup_button_panel(self, parent):
-        """Setup the left button panel"""
-        # Instructions
-        instr_frame = ttk.LabelFrame(parent, text="Instructions", padding=10)
-        instr_frame.pack(fill=tk.X, pady=(0, 15))
+    def setup_script_cards(self, parent):
+        """Setup script execution cards"""
+        # Title
+        title = tk.Label(parent, text="Workflow Steps", font=("Arial", 12, "bold"), 
+                        fg=self.text_dark, bg=self.bg_color)
+        title.pack(anchor=tk.W, pady=(0, 15))
         
-        instructions = (
-            "1. Create Dataset\n"
-            "   Convert images to YOLO format\n\n"
-            "2. Train Model\n"
-            "   Train a new YOLO model\n\n"
-            "3. Test Model\n"
-            "   Run inference on test images\n\n"
-            "4. Upgrade Model\n"
-            "   Continue training existing model"
-        )
+        # Scripts info
+        scripts = [
+            ("1. Create Dataset", "create_dataset.py", "Convert image folders\nto YOLO format", "📁"),
+            ("2. Train Model", "train_model.py", "Train a new YOLO\ndetection model", "📈"),
+            ("3. Test Model", "test_model.py", "Run inference on\ntest images", "🔍"),
+            ("4. Upgrade Model", "upgrade_model.py", "Continue training\nexisting weights", "⬆️")
+        ]
         
-        instr_label = ttk.Label(instr_frame, text=instructions, 
-                              font=("Arial", 9), justify=tk.LEFT)
-        instr_label.pack(fill=tk.X)
-        
-        # Script buttons
-        buttons_frame = ttk.LabelFrame(parent, text="Scripts", padding=10)
-        buttons_frame.pack(fill=tk.X, pady=(0, 15))
-        
-        # Create Dataset Button
-        btn1 = self.create_script_button(
-            buttons_frame,
-            "1. Create Dataset",
-            "create_dataset.py",
-            "Convert class folders to YOLO format"
-        )
-        btn1.pack(fill=tk.X, pady=5)
-        
-        # Train Model Button
-        btn2 = self.create_script_button(
-            buttons_frame,
-            "2. Train Model",
-            "train_model.py",
-            "Train a new YOLO model"
-        )
-        btn2.pack(fill=tk.X, pady=5)
-        
-        # Test Model Button
-        btn3 = self.create_script_button(
-            buttons_frame,
-            "3. Test Model",
-            "test_model.py",
-            "Run inference on test images"
-        )
-        btn3.pack(fill=tk.X, pady=5)
-        
-        # Upgrade Model Button
-        btn4 = self.create_script_button(
-            buttons_frame,
-            "4. Upgrade Model",
-            "upgrade_model.py",
-            "Continue training from existing weights"
-        )
-        btn4.pack(fill=tk.X, pady=5)
-        
-        # Stop button
-        stop_frame = ttk.Frame(parent)
-        stop_frame.pack(fill=tk.X, pady=10)
-        
-        self.stop_btn = ttk.Button(stop_frame, text="⏹ Stop Process", 
-                                  command=self.stop_process, state=tk.DISABLED)
-        self.stop_btn.pack(fill=tk.X)
+        for title_text, script, desc, icon in scripts:
+            self.create_script_card(parent, title_text, script, desc, icon)
     
-    def create_script_button(self, parent, text, script, tooltip):
-        """Create a styled button for a script"""
-        btn = tk.Button(
-            parent,
-            text=text,
-            command=lambda: self.run_script(script),
-            bg=self.accent_color,
-            fg="white",
-            font=("Arial", 10, "bold"),
-            relief=tk.RAISED,
-            cursor="hand2",
-            activebackground="#45a049",
-            activeforeground="white"
-        )
+    def create_script_card(self, parent, title, script, description, icon):
+        """Create a script execution card"""
+        card = tk.Frame(parent, bg=self.card_color, relief=tk.FLAT, bd=1)
+        card.pack(fill=tk.X, pady=8)
         
-        def on_enter(e):
-            btn.config(bg="#45a049")
-        def on_leave(e):
-            btn.config(bg=self.accent_color)
+        # Add border effect
+        card.configure(highlightthickness=1, highlightbackground=self.border_color)
         
-        btn.bind("<Enter>", on_enter)
-        btn.bind("<Leave>", on_leave)
+        # Hover effect
+        def on_enter(e, c=card):
+            c.configure(bg="#fafaf8", highlightbackground=self.accent_color)
         
-        return btn
+        def on_leave(e, c=card):
+            c.configure(bg=self.card_color, highlightbackground=self.border_color)
+        
+        card.bind("<Enter>", on_enter)
+        card.bind("<Leave>", on_leave)
+        
+        # Content frame
+        content = tk.Frame(card, bg=self.card_color)
+        content.pack(fill=tk.BOTH, expand=True, padx=15, pady=12)
+        
+        # Top row: icon, title, and clickable button
+        top_frame = tk.Frame(content, bg=self.card_color)
+        top_frame.pack(fill=tk.X, pady=(0, 8))
+        
+        icon_label = tk.Label(top_frame, text=icon, font=("Arial", 18), bg=self.card_color)
+        icon_label.pack(side=tk.LEFT, padx=(0, 10))
+        
+        title_label = tk.Label(top_frame, text=title, font=("Arial", 10, "bold"), 
+                              fg=self.text_dark, bg=self.card_color)
+        title_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        
+        # Description
+        desc_label = tk.Label(content, text=description, font=("Arial", 9), 
+                             fg=self.text_light, bg=self.card_color, justify=tk.LEFT)
+        desc_label.pack(anchor=tk.W, pady=(0, 8))
+        
+        # Run button
+        btn = tk.Button(content, text="▶  Run", width=20,
+                       bg=self.accent_color, fg="white", font=("Arial", 9, "bold"),
+                       relief=tk.FLAT, cursor="hand2",
+                       command=lambda: self.run_script(script),
+                       activebackground="#45a049", activeforeground="white")
+        btn.pack(fill=tk.X)
+        
+        # Bind hover to card for better UX
+        for widget in [card, content, top_frame, icon_label, title_label, desc_label]:
+            widget.bind("<Enter>", on_enter)
+            widget.bind("<Leave>", on_leave)
+            widget.bind("<Button-1>", lambda e, s=script: self.run_script(s))
     
     def setup_output_panel(self, parent):
         """Setup the right output panel"""
         # Header with console title and stats
-        header_frame = ttk.Frame(parent)
-        header_frame.pack(fill=tk.X, pady=(0, 8))
+        header_frame = tk.Frame(parent, bg=self.bg_color)
+        header_frame.pack(fill=tk.X, pady=(0, 10))
         
-        title = ttk.Label(header_frame, text="📊 Output Console", 
-                         font=("Arial", 11, "bold"))
+        title = tk.Label(header_frame, text="📊 Console Output", 
+                        font=("Arial", 12, "bold"), fg=self.text_dark, bg=self.bg_color)
         title.pack(side=tk.LEFT)
         
-        self.line_count_label = ttk.Label(header_frame, text="Lines: 0", 
-                                         font=("Arial", 9), foreground="#666666")
+        self.line_count_label = tk.Label(header_frame, text="Lines: 0", 
+                                        font=("Arial", 9), fg=self.text_light, bg=self.bg_color)
         self.line_count_label.pack(side=tk.RIGHT, padx=10)
         
         # Output text area with scrollbar
@@ -706,7 +731,7 @@ class DesktopApp:
     def _run_script_thread(self, cmd, script_name):
         """Run script in separate thread"""
         self.is_running = True
-        self.stop_btn.config(state=tk.NORMAL)
+        self.stop_btn.config(state=tk.NORMAL, bg="#F44336", activebackground="#d32f2f")
         self.update_status("Running...", "#FF9800")
         
         try:
@@ -757,7 +782,7 @@ class DesktopApp:
         finally:
             self.current_process = None
             self.is_running = False
-            self.stop_btn.config(state=tk.DISABLED)
+            self.stop_btn.config(state=tk.DISABLED, bg=self.stop_btn_normal_color)
             self.update_status("Ready", "#4CAF50")
     
     def stop_process(self):
