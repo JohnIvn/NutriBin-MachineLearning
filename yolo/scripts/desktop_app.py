@@ -16,6 +16,7 @@ import re
 from PIL import Image, ImageTk
 import cv2
 import numpy as np
+from scheduled_training import ScheduledTraining
 
 
 class ParametersDialog(tk.Toplevel):
@@ -187,6 +188,29 @@ class ParametersDialog(tk.Toplevel):
             self.add_section_title(scrollable_frame, "Tips")
             self.add_info_label(scrollable_frame,
                               "Press 'q' to quit\nPress 's' to save snapshot")
+
+        elif self.script_name == "schedule_training.py":
+            self.add_section_title(scrollable_frame, "Schedule Settings")
+            self.add_param_field(scrollable_frame, "Time (HH:MM)", "time", "23:30",
+                               "Local time to start training (24h format)")
+            self.add_checkbox_field(scrollable_frame, "Repeat Daily", "repeat_daily", True,
+                                  "Run the scheduled job every day at the specified time")
+            self.add_checkbox_field(scrollable_frame, "Run Once", "once", False,
+                                  "Run only the next occurrence and then stop")
+
+            self.add_section_title(scrollable_frame, "Training Options")
+            self.add_param_field(scrollable_frame, "Epochs", "epochs", "20", 
+                               "Number of training iterations (default: 20)")
+            self.add_param_field(scrollable_frame, "Image Size", "imgsz", "640", 
+                               "Input image resolution (default: 640)")
+            self.add_param_field(scrollable_frame, "Batch Size", "batch", "8", 
+                               "Batch size for training (default: 8)")
+            self.add_device_field(scrollable_frame, "Device", "device", "auto", 
+                                "GPU/CPU selection (default: auto)")
+            self.add_model_path_field(scrollable_frame, "Base Weights", "base_weights", "best.pt",
+                                     "Optional base weights to continue training from")
+            self.add_checkbox_field(scrollable_frame, "Auto-create Dataset", "auto_create", True,
+                                  "Automatically create dataset if missing before training")
         
         # Footer with buttons
         footer = tk.Frame(self, bg="#f5f5f5", height=60)
@@ -419,7 +443,7 @@ class DesktopApp:
         
         try:
             logo_path = self.yolo_root / 'public' / 'logo.png'
-            print(f"Looking for logo at: {logo_path}")
+            # print(f"Looking for logo at: {logo_path}")
             # print(f"Logo exists: {logo_path.exists()}")
             if logo_path.exists():
                 logo_img = Image.open(str(logo_path))
@@ -532,6 +556,7 @@ class DesktopApp:
             ("3. Test Model", "test_model.py", "Run inference on\ntest images", "🔍"),
             ("4. Upgrade Model", "upgrade_model.py", "Continue training\nexisting weights", "⬆️"),
             ("5. Live Detection", "live_test.py", "Real-time detection\nwith webcam", "📹"),
+            ("6. Schedule Training", "schedule_training.py", "Schedule training\nat a specified time", "⏰"),
         ]
         
         for title_text, script, desc, icon in scripts:
@@ -849,6 +874,34 @@ class DesktopApp:
                 camera_id=int(params.get("camera", "0")),
                 model_path=params.get("model")
             )
+
+        elif script_name == "schedule_training.py":
+            # Build schedule command
+            # Expected params: time, repeat_daily (True/False), once (True/False)
+            if not params.get('time'):
+                messagebox.showerror("Error", "Please specify a time for scheduled training (HH:MM).")
+                return
+
+            cmd.extend(["--time", params.get('time')])
+            if params.get('repeat_daily') in (True, 'True', 'true', '1'):
+                cmd.append('--repeat-daily')
+            if params.get('once') in (True, 'True', 'true', '1'):
+                cmd.append('--once')
+
+            # Forward training options
+            if params.get('epochs'):
+                cmd.extend(['--epochs', params.get('epochs')])
+            if params.get('imgsz'):
+                cmd.extend(['--imgsz', params.get('imgsz')])
+            if params.get('batch'):
+                cmd.extend(['--batch', params.get('batch')])
+            if params.get('device'):
+                cmd.extend(['--device', params.get('device')])
+            if params.get('base_weights'):
+                cmd.extend(['--base-weights', params.get('base_weights')])
+            if params.get('auto_create') in (True, 'True', 'true', '1'):
+                cmd.append('--auto-create')
+            self.log_output(f"⏰ Scheduled: time={params.get('time')} repeat_daily={params.get('repeat_daily')} once={params.get('once')}", "info")
         
         elif script_name == "create_dataset.py":
             self.log_output("📁 Creating dataset from image folders...", "info")

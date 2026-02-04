@@ -9,3 +9,5 @@ yolo/scripts/runs
 yolo/scripts/yolov8n.pt
 
 yolov8n.pt
+
+yolo/scripts/__pycache__/
