@@ -1,10 +1,11 @@
 """Live testing with camera feed using YOLO detection.
 
 This script opens your webcam and runs real-time YOLO detection
-on the live feed. Press 'q' to exit.
+on the live feed. It supports PyTorch mode for .pt, .pth, and .bin weights.
+Press 'q' to exit.
 
 Usage:
-  python yolo/scripts/live_test.py --model best.pt --imgsz 640 --conf 0.25
+  python yolo/scripts/live_test.py --model best.pt --mode pytorch --imgsz 640
 """
 
 from pathlib import Path
@@ -18,7 +19,7 @@ OUTPUT_DIR = ROOT / 'outputs'
 
 
 def find_default_weights():
-    """Find the most recent or default weights file"""
+    """Find the most recent or default weights file (.pt, .pth, or .bin)"""
     weights_dir = OUTPUT_DIR / 'yolo_training' / 'weights'
     
     # First, look for timestamped best.pt files (newest first)
@@ -26,17 +27,33 @@ def find_default_weights():
     if timestamped_models:
         return timestamped_models[0]
     
+    # Check for .bin or .pth files in outputs
+    for ext in ('*_best.bin', '*_best.pth', 'best.bin', 'best.pth'):
+        for p in OUTPUT_DIR.glob(ext):
+            if p.exists():
+                return p
+    
     # Fallback to standard best.pt
     for name in ('best.pt', 'last.pt'):
         p = weights_dir / name
         if p.exists():
             return p
+            
+    # Fallback to base model in scripts or root
+    base_model = ROOT / 'scripts' / 'yolov8n.pt'
+    if not base_model.exists():
+        base_model = ROOT / 'yolov8n.pt'
+        
+    if base_model.exists():
+        return base_model
+
     return None
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model', type=str, default=None, help='Path to weights (.pt)')
+    parser.add_argument('--model', type=str, default=None, help='Path to weights (.pt, .pth, or .bin)')
+    parser.add_argument('--mode', type=str, default='pytorch', choices=['pytorch', 'torchscript', 'onnx'], help='Inference mode')
     parser.add_argument('--imgsz', type=int, default=640, help='Input image size')
     parser.add_argument('--conf', type=float, default=0.25, help='Confidence threshold')
     parser.add_argument('--device', type=str, default='auto', help="Device: 'auto', 'cpu', or CUDA id")
@@ -82,6 +99,7 @@ def main():
         return
 
     print(f'Loading model from: {model_path}')
+    print(f'Running in {args.mode.upper()} mode')
     print(f'Using device: {device}')
     print('Opening camera... Press "q" to quit or press "s" to save snapshot.')
     print('Note: If display fails, snapshots will auto-save every 30 frames.\n')

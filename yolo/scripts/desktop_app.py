@@ -141,7 +141,7 @@ class ParametersDialog(tk.Toplevel):
         elif self.script_name == "test_model.py":
             self.add_section_title(scrollable_frame, "Model Configuration")
             self.add_model_path_field(scrollable_frame, "Model Path", "model", "best.pt", 
-                                     "Path to model weights file")
+                                     "Path to model weights file (.pt, .pth, or .bin)")
             
             self.add_section_title(scrollable_frame, "Inference Settings")
             self.add_param_field(scrollable_frame, "Image Size", "imgsz", "640", 
@@ -156,7 +156,7 @@ class ParametersDialog(tk.Toplevel):
         elif self.script_name == "upgrade_model.py":
             self.add_section_title(scrollable_frame, "Base Model")
             self.add_model_path_field(scrollable_frame, "Base Weights", "base_weights", "best.pt",
-                                     "Path to existing model to continue from")
+                                     "Path to existing model to continue from (.pt, .pth, or .bin)")
             self.add_checkbox_field(scrollable_frame, "Auto-create Dataset", "auto_create", True,
                                   "Automatically create dataset if missing")
             
@@ -173,7 +173,10 @@ class ParametersDialog(tk.Toplevel):
         elif self.script_name == "live_test.py":
             self.add_section_title(scrollable_frame, "Model & Camera")
             self.add_model_path_field(scrollable_frame, "Model Path", "model", "best.pt",
-                                     "Path to model weights file")
+                                     "Path to model weights file (.pt, .pth, or .bin)")
+            self.add_dropdown_field(scrollable_frame, "Inference Mode", "mode", 
+                                  ["pytorch", "torchscript", "onnx"], "pytorch",
+                                  "Engine mode to use for predictions")
             self.add_param_field(scrollable_frame, "Camera ID", "camera", "0",
                                "Camera device ID (default: 0 for webcam)")
             
@@ -301,7 +304,32 @@ class ParametersDialog(tk.Toplevel):
         combo.pack(fill=tk.X, ipady=6)
         
         self.fields[key] = var
-    
+
+    def add_dropdown_field(self, parent, label, key, values, default, help_text=""):
+        """Add generic dropdown field"""
+        frame = tk.Frame(parent, bg="#ffffff")
+        frame.pack(fill=tk.X, pady=10)
+        
+        label_frame = tk.Frame(frame, bg="#ffffff")
+        label_frame.pack(fill=tk.X, pady=(0, 5))
+        
+        tk.Label(label_frame, text=label, font=("Arial", 9, "bold"), 
+                fg="#333333", bg="#ffffff").pack(anchor=tk.W)
+        
+        if help_text:
+            tk.Label(label_frame, text=help_text, font=("Arial", 8), 
+                    fg="#999999", bg="#ffffff").pack(anchor=tk.W)
+        
+        value = self.params.get(key, default) if self.params else default
+        var = tk.StringVar(value=value)
+        
+        combo = ttk.Combobox(frame, textvariable=var, 
+                            values=values,
+                            state="readonly", font=("Arial", 10))
+        combo.pack(fill=tk.X, ipady=6)
+        
+        self.fields[key] = var
+
     def add_model_path_field(self, parent, label, key, default, help_text=""):
         """Add model path field with browse button"""
         frame = tk.Frame(parent, bg="#ffffff")
@@ -360,10 +388,16 @@ class ParametersDialog(tk.Toplevel):
         self.fields[key] = var
     
     def browse_file(self, var):
-        """Browse for file"""
+        """Browse for file (supports .pt, .pth, .bin)"""
         filename = filedialog.askopenfilename(
             title="Select Model Weights",
-            filetypes=[("PyTorch weights", "*.pt"), ("All files", "*.*")],
+            filetypes=[
+                ("Model weights", "*.pt *.pth *.bin"),
+                ("PyTorch weights", "*.pt"),
+                ("Torch weights", "*.pth"),
+                ("Binary weights", "*.bin"),
+                ("All files", "*.*")
+            ],
             initialdir=str(Path(__file__).resolve().parent.parent / "outputs")
         )
         if filename:
@@ -667,7 +701,7 @@ class DesktopApp:
         self.output_text.tag_config("header", foreground="#79c0ff", font=("Consolas", 10, "bold"))
         self.output_text.tag_config("separator", foreground="#30363d")
     
-    def setup_camera_preview(self, parent, camera_id=0, model_path=None):
+    def setup_camera_preview(self, parent, camera_id=0, model_path=None, mode="pytorch"):
         """Setup camera preview panel"""
         # Clear the container
         for widget in parent.winfo_children():
@@ -686,7 +720,8 @@ class DesktopApp:
         info_frame.pack(fill=tk.X, side=tk.BOTTOM)
         info_frame.pack_propagate(False)
         
-        self.camera_info_label = tk.Label(info_frame, text="📹 Camera: Starting...", 
+        mode_text = f" | Mode: {mode.upper()}" if mode else ""
+        self.camera_info_label = tk.Label(info_frame, text=f"📹 Camera: Starting...{mode_text}", 
                                          font=("Arial", 9), fg="#4CAF50", bg="#1a1a1a")
         self.camera_info_label.pack(anchor=tk.W, padx=10, pady=8)
         
@@ -694,7 +729,7 @@ class DesktopApp:
         self.camera_active = True
         self.camera_thread = threading.Thread(
             target=self._camera_capture_loop,
-            args=(camera_id, model_path)
+            args=(camera_id, model_path, mode)
         )
         self.camera_thread.daemon = True
         self.camera_thread.start()
@@ -858,22 +893,35 @@ class DesktopApp:
             self.log_output(f"⬆️  Parameters: --epochs {params.get('epochs', '10')} --imgsz {params.get('imgsz', '640')} --batch {params.get('batch', '8')}", "info")
         
         elif script_name == "live_test.py":
+            cmd_args = []
             if params.get("model"):
-                cmd.extend(["--model", params.get("model")])
-            cmd.extend([
+                cmd_args.extend(["--model", params.get("model")])
+            if params.get("mode"):
+                cmd_args.extend(["--mode", params.get("mode")])
+            cmd_args.extend([
                 "--imgsz", params.get("imgsz", "640"),
                 "--conf", params.get("conf", "0.25"),
                 "--device", params.get("device", "auto"),
                 "--camera", params.get("camera", "0")
             ])
-            self.log_output(f"📹 Parameters: --imgsz {params.get('imgsz', '640')} --conf {params.get('conf', '0.25')} --camera {params.get('camera', '0')}", "info")
+            self.log_output(f"📹 Parameters: --mode {params.get('mode', 'pytorch')} --imgsz {params.get('imgsz', '640')} --conf {params.get('conf', '0.25')} --camera {params.get('camera', '0')}", "info")
             
             # Show camera preview instead of console for live detection
             self.setup_camera_preview(
                 self.output_container,
                 camera_id=int(params.get("camera", "0")),
-                model_path=params.get("model")
+                model_path=params.get("model"),
+                mode=params.get("mode", "pytorch")
             )
+            
+            # For live test, we handle the running state manually and don't start external script
+            self.is_running = True
+            self.update_status("Live Detection", "#4CAF50")
+            self.stop_btn.config(state=tk.NORMAL, bg="#F44336", activebackground="#d32f2f")
+            
+            # Store params for next time
+            self.params = params
+            return
 
         elif script_name == "schedule_training.py":
             # Build schedule command
@@ -976,12 +1024,12 @@ class DesktopApp:
             self.update_status("Ready", "#4CAF50")
     
     def stop_process(self):
-        """Stop the current process"""
+        """Stop the current process or camera capture"""
         # Stop camera if active
-        if hasattr(self, 'camera_active'):
+        camera_was_active = False
+        if hasattr(self, 'camera_active') and self.camera_active:
             self.camera_active = False
-            # Give thread time to stop
-            self.root.after(500)
+            camera_was_active = True
         
         if self.current_process and self.is_running:
             try:
@@ -998,12 +1046,20 @@ class DesktopApp:
                     self.current_process.kill()
                 except:
                     pass
-            finally:
-                self.current_process = None
-                self.is_running = False
-                self.stop_btn.config(state=tk.DISABLED)
+        
+        # Reset UI state if it was a manual run (like camera) or if process is cleared
+        if camera_was_active or (not self.current_process and self.is_running):
+            self.is_running = False
+            self.current_process = None
+            self.stop_btn.config(state=tk.DISABLED, bg=self.stop_btn_normal_color)
+            self.update_status("Ready", "#4CAF50")
+            if hasattr(self, 'camera_info_label'):
+                try:
+                    self.camera_info_label.config(text="📹 Camera: Stopped", fg="#999999")
+                except:
+                    pass
     
-    def _camera_capture_loop(self, camera_id, model_path):
+    def _camera_capture_loop(self, camera_id, model_path, mode="pytorch"):
         """Capture camera frames and display with YOLO detections"""
         import time
         cap = None
@@ -1012,22 +1068,34 @@ class DesktopApp:
             from ultralytics import YOLO
             
             # Load model
-            if model_path and str(model_path) != "best.pt":
+            if model_path and Path(model_path).exists() and str(model_path) != "best.pt":
                 model = YOLO(str(model_path))
             else:
-                # Find latest model
+                # Find latest model (look for .pt, .pth or .bin)
                 weights_dir = self.yolo_root / 'outputs'
-                timestamped_models = sorted(weights_dir.glob('*_best.pt'), reverse=True)
-                if timestamped_models:
-                    model = YOLO(str(timestamped_models[0]))
+                found_model = None
+                
+                # Try timestamped first
+                for ext in ('*_best.pt', '*_best.pth', '*_best.bin'):
+                    timestamped = sorted(weights_dir.glob(ext), reverse=True)
+                    if timestamped:
+                        found_model = timestamped[0]
+                        break
+                
+                # Try standard names
+                if not found_model:
+                    for ext in ('best.pt', 'best.pth', 'best.bin'):
+                        p = weights_dir / 'yolo_training' / 'weights' / ext
+                        if p.exists():
+                            found_model = p
+                            break
+                
+                if found_model:
+                    model = YOLO(str(found_model))
                 else:
-                    default_model = weights_dir / 'yolo_training' / 'weights' / 'best.pt'
-                    if default_model.exists():
-                        model = YOLO(str(default_model))
-                    else:
-                        if hasattr(self, 'camera_info_label'):
-                            self.camera_info_label.config(text="❌ No model found!")
-                        return
+                    if hasattr(self, 'camera_info_label'):
+                        self.camera_info_label.config(text="❌ No model found!")
+                    return
             
             # Open camera
             cap = cv2.VideoCapture(camera_id)
@@ -1046,31 +1114,31 @@ class DesktopApp:
             
             frame_count = 0
             detection_count = 0
-            display_frame_skip = 0  # Skip every other frame for performance
+            first_frame_shown = False
+            mode_str = f" | {mode.upper()}" if mode else ""
             
             # Store photo reference
             self._current_photo = None
             self._camera_image_id = None
             
             if hasattr(self, 'camera_info_label'):
-                self.camera_info_label.config(text="📹 Camera: Initializing...")
+                self.camera_info_label.config(text=f"📹 Camera: Initializing...{mode_str}")
             
-            # Warm up camera with 5 frames
-            for _ in range(5):
-                ret, _ = cap.read()
-                if ret:
-                    break
+            # Warm up camera
+            for _ in range(3):
+                cap.read()
             
             while self.camera_active and self.is_running:
                 ret, frame = cap.read()
                 if not ret or frame is None or frame.size == 0:
+                    time.sleep(0.01)
                     continue
                 
                 frame_count += 1
                 
                 try:
-                    # Run YOLO detection on every frame
-                    results = model(frame, verbose=False)
+                    # Run YOLO detection
+                    results = model.predict(frame, verbose=False)
                     
                     # Count detections
                     if results[0].boxes:
@@ -1080,76 +1148,71 @@ class DesktopApp:
                     annotated_frame = results[0].plot()
                     
                     if annotated_frame is None or annotated_frame.size == 0:
-                        continue
+                        annotated_frame = frame
                     
                     # Convert BGR to RGB
                     frame_rgb = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
                     
-                    # Get valid canvas size
+                    # Get canvas size
                     try:
                         canvas_w = self.camera_canvas.winfo_width()
                         canvas_h = self.camera_canvas.winfo_height()
-                        if canvas_w < 50 or canvas_h < 50:
-                            continue
                     except:
                         break
                     
+                    # If canvas not ready, wait
+                    if canvas_w < 50 or canvas_h < 50:
+                        time.sleep(0.1)
+                        continue
+                    
                     # Resize frame to fit canvas
                     h, w = frame_rgb.shape[:2]
-                    if h > 0 and w > 0:
-                        scale = min(canvas_w / w, canvas_h / h, 1.0)
-                        new_w = int(w * scale)
-                        new_h = int(h * scale)
-                        if new_w > 0 and new_h > 0:
-                            frame_rgb = cv2.resize(frame_rgb, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+                    scale = min(canvas_w / w, canvas_h / h, 1.0)
+                    new_w = max(1, int(w * scale))
+                    new_h = max(1, int(h * scale))
+                    frame_resized = cv2.resize(frame_rgb, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
                     
                     # Convert to PIL and display
                     try:
-                        pil_image = Image.fromarray(frame_rgb)
-                        self._current_photo = ImageTk.PhotoImage(pil_image)
+                        pil_image = Image.fromarray(frame_resized)
+                        photo = ImageTk.PhotoImage(pil_image)
                         
-                        # Calculate center position
-                        img_w = pil_image.width
-                        img_h = pil_image.height
-                        center_x = canvas_w // 2
-                        center_y = canvas_h // 2
+                        # Calculate center
+                        cx = canvas_w // 2
+                        cy = canvas_h // 2
                         
-                        # Create or update image on canvas
-                        if self._camera_image_id is None:
-                            self._camera_image_id = self.camera_canvas.create_image(
-                                center_x, center_y, image=self._current_photo, anchor=tk.CENTER
-                            )
-                        else:
-                            try:
-                                self.camera_canvas.itemconfig(self._camera_image_id, image=self._current_photo)
-                                self.camera_canvas.coords(self._camera_image_id, center_x, center_y)
-                            except:
-                                # Canvas item was deleted, recreate
+                        def update_ui(p=photo, x=cx, y=cy, dc=detection_count):
+                            if not self.camera_active: return
+                            self._current_photo = p
+                            if self._camera_image_id is None:
                                 self._camera_image_id = self.camera_canvas.create_image(
-                                    center_x, center_y, image=self._current_photo, anchor=tk.CENTER
+                                    x, y, image=self._current_photo, anchor=tk.CENTER
                                 )
-                        
-                        # Update status
-                        if hasattr(self, 'camera_info_label'):
-                            try:
+                            else:
+                                try:
+                                    self.camera_canvas.itemconfig(self._camera_image_id, image=self._current_photo)
+                                    self.camera_canvas.coords(self._camera_image_id, x, y)
+                                except:
+                                    self._camera_image_id = self.camera_canvas.create_image(
+                                        x, y, image=self._current_photo, anchor=tk.CENTER
+                                    )
+                            
+                            # Critical reference
+                            self.camera_canvas.image = self._current_photo
+                            
+                            if hasattr(self, 'camera_info_label'):
                                 self.camera_info_label.config(
-                                    text=f"📹 Camera: {frame_count} frames | 🎯 Detections: {detection_count}"
+                                    text=f"📹 Camera: Live{mode_str} | 🎯 Detections: {dc}",
+                                    fg="#4CAF50"
                                 )
-                            except:
-                                pass
-                        
-                        # Force GUI update
-                        try:
-                            self.camera_canvas.update()
-                        except:
-                            break
-                    
-                    except Exception as e:
-                        # Image error - skip frame
+
+                        self.root.after(0, update_ui)
+                        first_frame_shown = True
+
+                    except Exception:
                         continue
                 
-                except Exception as e:
-                    # Detection error - skip frame
+                except Exception:
                     continue
             
             # Cleanup
