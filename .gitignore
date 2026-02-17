@@ -11,3 +11,6 @@ yolo/scripts/yolov8n.pt
 yolov8n.pt
 
 yolo/scripts/__pycache__/
+
+yolo/scripts/bio
+yolo/scripts/trash-clasiffier-biodegradable

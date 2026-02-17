@@ -192,6 +192,17 @@ class ParametersDialog(tk.Toplevel):
             self.add_info_label(scrollable_frame,
                               "Press 'q' to quit\nPress 's' to save snapshot")
 
+        elif self.script_name == "hugging.py":
+            self.add_section_title(scrollable_frame, "Classifier & Camera")
+            self.add_param_field(scrollable_frame, "Model Dir", "model_dir", "yolo/scripts/trash-clasiffier-biodegradable",
+                               "Path to local Hugging Face model folder")
+            self.add_param_field(scrollable_frame, "Camera ID", "camera", "0",
+                               "Camera device ID (default: 0 for webcam)")
+            self.add_param_field(scrollable_frame, "Device", "device", "cpu",
+                               "cpu or cuda (default: cpu)")
+            self.add_param_field(scrollable_frame, "Top K", "topk", "1",
+                               "Number of top labels to display")
+
         elif self.script_name == "schedule_training.py":
             self.add_section_title(scrollable_frame, "Schedule Settings")
             self.add_param_field(scrollable_frame, "Time (HH:MM)", "time", "23:30",
@@ -590,6 +601,7 @@ class DesktopApp:
             ("3. Test Model", "test_model.py", "Run inference on\ntest images", "🔍"),
             ("4. Upgrade Model", "upgrade_model.py", "Continue training\nexisting weights", "⬆️"),
             ("5. Live Detection", "live_test.py", "Real-time detection\nwith webcam", "📹"),
+            ("6. Live Classifier", "hugging.py", "Real-time classification\n(trash classifier)", "🧠"),
             ("6. Schedule Training", "schedule_training.py", "Schedule training\nat a specified time", "⏰"),
         ]
         
@@ -817,6 +829,17 @@ class DesktopApp:
         """Update status indicator"""
         status_symbol = "●" if color == "#4CAF50" else "⟳" if color == "#FF9800" else "✕"
         self.status_label.config(text=f"{status_symbol} {status}", foreground=color)
+
+    def _choose_font_scale(self, text, max_width, font=cv2.FONT_HERSHEY_SIMPLEX, thickness=2):
+        """Choose a font scale so the rendered text width fits within max_width."""
+        # Start at default and decrease until it fits
+        scale = 0.8
+        while scale >= 0.3:
+            (w, h), _ = cv2.getTextSize(text, font, scale, thickness)
+            if w <= max_width:
+                return scale
+            scale -= 0.05
+        return 0.3
     
     def run_script(self, script_name):
         """Show parameter dialog and run a script"""
@@ -920,6 +943,26 @@ class DesktopApp:
             self.stop_btn.config(state=tk.NORMAL, bg="#F44336", activebackground="#d32f2f")
             
             # Store params for next time
+            self.params = params
+            return
+        elif script_name == "hugging.py":
+            model_dir = params.get("model_dir", "yolo/scripts/trash-clasiffier-biodegradable")
+            camera_id = int(params.get("camera", "0"))
+            device = params.get("device", None)
+            topk = int(params.get("topk", "1"))
+
+            # Show camera preview for classifier
+            self.setup_classifier_preview(
+                self.output_container,
+                camera_id=camera_id,
+                model_dir=model_dir,
+                device=device,
+                topk=topk
+            )
+
+            self.is_running = True
+            self.update_status("Live Classifier", "#4CAF50")
+            self.stop_btn.config(state=tk.NORMAL, bg="#F44336", activebackground="#d32f2f")
             self.params = params
             return
 
@@ -1234,6 +1277,190 @@ class DesktopApp:
         finally:
             if cap:
                 cap.release()
+
+    def setup_classifier_preview(self, parent, camera_id=0, model_dir=None, device=None, topk=1):
+        """Setup camera preview panel for Hugging Face image classifier"""
+        for widget in parent.winfo_children():
+            widget.destroy()
+
+        camera_frame = tk.Frame(parent, bg="#000000", relief=tk.SUNKEN, bd=2)
+        camera_frame.pack(fill=tk.BOTH, expand=True)
+
+        self.classifier_canvas = tk.Canvas(camera_frame, bg="#000000", highlightthickness=0)
+        self.classifier_canvas.pack(fill=tk.BOTH, expand=True)
+
+        info_frame = tk.Frame(camera_frame, bg="#1a1a1a", height=40)
+        info_frame.pack(fill=tk.X, side=tk.BOTTOM)
+        info_frame.pack_propagate(False)
+
+        self.classifier_info_label = tk.Label(info_frame, text=f"📹 Classifier: Starting...", 
+                                              font=("Arial", 9), fg="#4CAF50", bg="#1a1a1a")
+        self.classifier_info_label.pack(anchor=tk.W, padx=10, pady=8)
+
+        self.camera_active = True
+        self.classifier_thread = threading.Thread(
+            target=self._classifier_capture_loop,
+            args=(camera_id, model_dir, device, topk)
+        )
+        self.classifier_thread.daemon = True
+        self.classifier_thread.start()
+
+    def _classifier_capture_loop(self, camera_id, model_dir, device, topk):
+        """Capture camera frames and run HF classifier on each frame"""
+        import time
+        try:
+            from transformers import AutoImageProcessor, AutoModelForImageClassification
+            from PIL import Image
+            import torch
+            import torch.nn.functional as F
+        except Exception as e:
+            if hasattr(self, 'classifier_info_label'):
+                self.classifier_info_label.config(text=f"❌ Error importing libs: {str(e)[:30]}")
+            self.camera_active = False
+            return
+
+        try:
+            model_dir = model_dir or str(self.script_dir / 'trash-clasiffier-biodegradable')
+            proc = None
+            try:
+                proc = AutoImageProcessor.from_pretrained(model_dir)
+            except Exception:
+                try:
+                    from transformers import AutoFeatureExtractor
+                    proc = AutoFeatureExtractor.from_pretrained(model_dir)
+                except Exception:
+                    proc = None
+
+            model = AutoModelForImageClassification.from_pretrained(model_dir)
+            use_device = device if device else ("cuda" if torch.cuda.is_available() else "cpu")
+            model.to(use_device)
+            model.eval()
+
+            if hasattr(self, 'classifier_info_label'):
+                self.classifier_info_label.config(text=f"📹 Classifier: Loaded model ({use_device})")
+
+        except Exception as e:
+            if hasattr(self, 'classifier_info_label'):
+                self.classifier_info_label.config(text=f"❌ Model load error: {str(e)[:40]}")
+            self.camera_active = False
+            return
+
+        cap = None
+        try:
+            cap = cv2.VideoCapture(camera_id)
+            time.sleep(1)
+            if not cap.isOpened():
+                if hasattr(self, 'classifier_info_label'):
+                    self.classifier_info_label.config(text=f"❌ Cannot open camera {camera_id}")
+                return
+
+            # Warm up
+            for _ in range(2):
+                cap.read()
+
+            self._current_photo = None
+            self._classifier_image_id = None
+
+            while self.camera_active and self.is_running:
+                ret, frame = cap.read()
+                if not ret or frame is None:
+                    time.sleep(0.01)
+                    continue
+
+                # Convert to PIL RGB
+                try:
+                    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    pil = Image.fromarray(rgb)
+                except Exception:
+                    pil = None
+
+                label_text = ""
+                try:
+                    if pil is not None and proc is not None:
+                        inputs = proc(images=pil, return_tensors="pt")
+                        inputs = {k: v.to(use_device) for k, v in inputs.items()}
+                        with torch.no_grad():
+                            out = model(**inputs)
+                            probs = F.softmax(out.logits, dim=-1)
+                            topk_probs, topk_inds = torch.topk(probs, k=min(topk, probs.shape[-1]), dim=-1)
+                            tops = []
+                            for p, idx in zip(topk_probs[0].cpu().tolist(), topk_inds[0].cpu().tolist()):
+                                lbl = model.config.id2label.get(str(idx), model.config.id2label.get(idx, str(idx))) if getattr(model.config, 'id2label', None) else str(idx)
+                                tops.append(f"{lbl}:{p:.2f}")
+                            label_text = " | ".join(tops)
+                    elif pil is not None:
+                        # If no processor, skip
+                        label_text = "(no processor)"
+                except Exception:
+                    label_text = "(err)"
+
+                # Overlay label on frame
+                try:
+                    display = frame.copy()
+                    if label_text:
+                        # scale text to fit canvas width
+                        try:
+                            canvas_w = self.camera_canvas.winfo_width()
+                        except:
+                            canvas_w = display.shape[1]
+                        max_w = max(50, canvas_w - 20)
+                        scale = self._choose_font_scale(label_text, max_w)
+                        thickness = 2 if scale >= 0.6 else 1
+                        cv2.putText(display, label_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, scale, (0, 255, 0), thickness)
+
+                    frame_rgb = cv2.cvtColor(display, cv2.COLOR_BGR2RGB)
+                    canvas_w = self.classifier_canvas.winfo_width()
+                    canvas_h = self.classifier_canvas.winfo_height()
+                    if canvas_w < 50 or canvas_h < 50:
+                        time.sleep(0.05)
+                        continue
+
+                    h, w = frame_rgb.shape[:2]
+                    scale = min(canvas_w / w, canvas_h / h, 1.0)
+                    new_w = max(1, int(w * scale))
+                    new_h = max(1, int(h * scale))
+                    frame_resized = cv2.resize(frame_rgb, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+
+                    pil_image = Image.fromarray(frame_resized)
+                    photo = ImageTk.PhotoImage(pil_image)
+
+                    cx = canvas_w // 2
+                    cy = canvas_h // 2
+
+                    def update_ui(p=photo, x=cx, y=cy, txt=label_text):
+                        if not self.camera_active: return
+                        self._current_photo = p
+                        if self._classifier_image_id is None:
+                            self._classifier_image_id = self.classifier_canvas.create_image(x, y, image=self._current_photo, anchor=tk.CENTER)
+                        else:
+                            try:
+                                self.classifier_canvas.itemconfig(self._classifier_image_id, image=self._current_photo)
+                                self.classifier_canvas.coords(self._classifier_image_id, x, y)
+                            except Exception:
+                                self._classifier_image_id = self.classifier_canvas.create_image(x, y, image=self._current_photo, anchor=tk.CENTER)
+
+                        self.classifier_canvas.image = self._current_photo
+                        if hasattr(self, 'classifier_info_label'):
+                            self.classifier_info_label.config(text=f"📹 Classifier: Live | {txt}", fg="#4CAF50")
+
+                    self.root.after(0, update_ui)
+                except Exception:
+                    continue
+
+        except Exception as e:
+            if hasattr(self, 'classifier_info_label'):
+                try:
+                    self.classifier_info_label.config(text=f"❌ Error: {str(e)[:35]}")
+                except:
+                    pass
+        finally:
+            if cap:
+                cap.release()
+            if hasattr(self, 'classifier_info_label'):
+                try:
+                    self.classifier_info_label.config(text="📹 Classifier: Stopped")
+                except:
+                    pass
 
 
 def main():
