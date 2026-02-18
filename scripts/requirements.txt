@@ -1,0 +1,5 @@
+python-socketio[client]
+websocket-client
+opencv-python
+numpy
+ultralytics
