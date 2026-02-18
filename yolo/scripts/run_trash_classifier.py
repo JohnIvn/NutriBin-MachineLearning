@@ -2,7 +2,6 @@ from pathlib import Path
 import argparse
 import json
 import sys
-import time
 
 from PIL import Image
 
@@ -52,7 +51,6 @@ def main():
     p.add_argument("--device", default=None, help="cpu or cuda (auto if omitted)")
     p.add_argument("--topk", type=int, default=3, help="Top K predictions to show")
     p.add_argument("--labels-file", default=None, help="Optional JSON file with id->label mapping or list of labels")
-    p.add_argument("--emit-server", default=None, help="Optional Socket.IO server URL to emit classification results")
     args = p.parse_args()
 
     model_dir = Path(args.model_dir)
@@ -103,31 +101,6 @@ def main():
         print("No images found at provided path")
         sys.exit(1)
 
-    # Optional: emit classification results to a Feed server
-    sio = None
-    if getattr(args, 'emit_server', None):
-        try:
-            import socketio
-
-            sio = socketio.Client(logger=False, reconnection=True)
-
-            @sio.event
-            def connect():
-                print('Connected to Feed server for classifications')
-
-            @sio.event
-            def disconnect():
-                print('Disconnected classifier client from Feed server')
-
-            try:
-                sio.connect(args.emit_server, auth={'role': 'classifier'})
-            except Exception as e:
-                print('Failed to connect classifier client to server:', e)
-                sio = None
-        except Exception as e:
-            print('socketio client not available; cannot emit classifications:', e)
-            sio = None
-
     batch_size = 8
     for i in range(0, len(image_paths), batch_size):
         batch_paths = image_paths[i : i + batch_size]
@@ -135,26 +108,11 @@ def main():
         probs, inds = predict_batch(model, processor, images, device, topk=args.topk)
         for pth, p_list, i_list in zip(batch_paths, probs, inds):
             print(pth)
-            # Print and optionally emit
-            emitted_preds = []
             for prob, idx in zip(p_list, i_list):
                 label = id2label.get(idx, str(idx))
                 print(f"  {label}: {prob:.4f}")
-                emitted_preds.append({"label": label, "probability": float(prob), "id": int(idx)})
-            # emit per-image classification result
-            if sio is not None and sio.connected:
-                try:
-                    payload = {"image": str(pth), "predictions": emitted_preds, "ts": time.time()}
-                    sio.emit('classification', payload)
-                except Exception as e:
-                    print('Failed to emit classification:', e)
             print()
-    # cleanup socket
-    if sio is not None and sio.connected:
-        try:
-            sio.disconnect()
-        except Exception:
-            pass
+
 
 if __name__ == "__main__":
     main()
