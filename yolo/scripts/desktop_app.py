@@ -17,6 +17,86 @@ from PIL import Image, ImageTk
 import cv2
 import numpy as np
 from scheduled_training import ScheduledTraining
+import requests
+import time
+from collections import deque
+import requests
+import time
+from collections import deque
+
+
+# Drowsiness level mapping for ESP32 integration
+DROWSINESS_LEVELS = {
+    "ALERT  FULLY AWAKE": {"level": 0, "intensity": 0, "description": "Fully awake"},
+    "EARLY DROWSINESS": {"level": 1, "intensity": 20, "description": "Early signs"},
+    "MODERATE DROWSINESS": {"level": 2, "intensity": 50, "description": "Moderate"},
+    "MICROSLEEP": {"level": 3, "intensity": 80, "description": "Microsleep detected"},
+    "REM SLEEP": {"level": 4, "intensity": 100, "description": "REM sleep"},
+    "STAGE N1 N2 N3": {"level": 5, "intensity": 100, "description": "Deep sleep"}
+}
+
+ALERT_THRESHOLD = 1
+BUZZER_THRESHOLD = 2
+VIBRATOR_THRESHOLD = 1
+SMOOTHING_WINDOW = 5
+
+
+class ESP32Controller:
+    """Handles HTTP communication with ESP32"""
+    
+    def __init__(self, ip_address="192.168.4.1", port=80):
+        self.ip = ip_address
+        self.port = port
+        self.base_url = f"http://{ip_address}:{port}"
+        self.last_command_time = 0
+        self.command_cooldown = 2.0
+        self.connected = False
+        self.enabled = False
+        
+    def test_connection(self):
+        """Test if ESP32 is reachable"""
+        try:
+            response = requests.get(f"{self.base_url}/", timeout=2)
+            self.connected = True
+            return True
+        except:
+            self.connected = False
+            return False
+    
+    def send_command(self, command):
+        """Send command to ESP32"""
+        if not self.enabled:
+            return False
+            
+        current_time = time.time()
+        if current_time - self.last_command_time < self.command_cooldown:
+            return False
+        
+        try:
+            url = f"{self.base_url}/command"
+            payload = {"command": command}
+            response = requests.post(url, json=payload, timeout=3)
+            
+            if response.status_code == 200:
+                self.last_command_time = current_time
+                self.connected = True
+                return True
+            return False
+        except:
+            self.connected = False
+            return False
+    
+    def activate_alert(self, intensity, use_buzzer=True, use_vibrator=True):
+        """Activate buzzer and/or vibrator at specified intensity (0-100)"""
+        if not self.enabled or intensity == 0:
+            return False
+            
+        success = True
+        if use_buzzer:
+            success &= self.send_command(f"TEST:buzzer:{intensity}")
+        if use_vibrator:
+            success &= self.send_command(f"TEST:vibrator:{intensity}")
+        return success
 
 
 class ParametersDialog(tk.Toplevel):
@@ -188,9 +268,16 @@ class ParametersDialog(tk.Toplevel):
             self.add_device_field(scrollable_frame, "Device", "device", "auto", 
                                 "GPU/CPU selection (default: auto)")
             
+            self.add_section_title(scrollable_frame, "ESP32 Drowsiness Alert (Optional)")
+            self.add_checkbox_field(scrollable_frame, "Enable ESP32", "esp32_enable", False,
+                                  "Send alerts to ESP32 when drowsiness detected")
+            self.add_param_field(scrollable_frame, "ESP32 IP", "esp32_ip", "192.168.4.1",
+                               "ESP32 IP address (default: 192.168.4.1)")
+            
             self.add_section_title(scrollable_frame, "Tips")
             self.add_info_label(scrollable_frame,
-                              "Press 'q' to quit\nPress 's' to save snapshot")
+                              "Press 'q' to quit\nPress 's' to save snapshot\n\n" +
+                              "ESP32: Connect to ESP32-Drowsiness-AP WiFi first")
 
         elif self.script_name == "hugging.py":
             self.add_section_title(scrollable_frame, "Classifier & Camera")
@@ -927,7 +1014,16 @@ class DesktopApp:
                 "--device", params.get("device", "auto"),
                 "--camera", params.get("camera", "0")
             ])
-            self.log_output(f"📹 Parameters: --mode {params.get('mode', 'pytorch')} --imgsz {params.get('imgsz', '640')} --conf {params.get('conf', '0.25')} --camera {params.get('camera', '0')}", "info")
+            
+            # Store ESP32 settings
+            self._esp32_enabled = params.get("esp32_enable", False)
+            self._esp32_ip = params.get("esp32_ip", "192.168.4.1")
+            
+            esp32_status = ""
+            if self._esp32_enabled:
+                esp32_status = f" | ESP32: {self._esp32_ip}"
+            
+            self.log_output(f"📹 Parameters: --mode {params.get('mode', 'pytorch')} --imgsz {params.get('imgsz', '640')} --conf {params.get('conf', '0.25')} --camera {params.get('camera', '0')}{esp32_status}", "info")
             
             # Show camera preview instead of console for live detection
             self.setup_camera_preview(
@@ -1106,6 +1202,25 @@ class DesktopApp:
         """Capture camera frames and display with YOLO detections"""
         import time
         cap = None
+        
+        # Initialize ESP32 if enabled
+        esp32 = None
+        esp32_enabled = getattr(self, '_esp32_enabled', False)
+        esp32_ip = getattr(self, '_esp32_ip', '192.168.4.1')
+        
+        if esp32_enabled:
+            esp32 = ESP32Controller(esp32_ip)
+            if esp32.test_connection():
+                esp32.enabled = True
+                self.log_output(f"✓ ESP32 connected at {esp32_ip}", "success")
+            else:
+                self.log_output(f"⚠ ESP32 not reachable at {esp32_ip}", "warning")
+                esp32.enabled = False
+        
+        # Drowsiness detection state
+        prediction_history = deque(maxlen=SMOOTHING_WINDOW)
+        last_alert_level = 0
+        
         try:
             # Import YOLO
             from ultralytics import YOLO
@@ -1183,6 +1298,46 @@ class DesktopApp:
                     # Run YOLO detection
                     results = model.predict(frame, verbose=False)
                     
+                    # Drowsiness detection and ESP32 alert
+                    drowsy_level = 0
+                    drowsy_class = ""
+                    drowsy_intensity = 0
+                    
+                    if esp32 and esp32.enabled and results[0].boxes is not None and len(results[0].boxes) > 0:
+                        # Get detection with highest confidence
+                        best_idx = results[0].boxes.conf.argmax()
+                        class_id = int(results[0].boxes.cls[best_idx])
+                        confidence = float(results[0].boxes.conf[best_idx])
+                        
+                        # Get class name from model
+                        class_name = model.names.get(class_id, f"Unknown ({class_id})")
+                        
+                        # Check if it's a drowsiness class
+                        drowsiness_info = DROWSINESS_LEVELS.get(class_name)
+                        
+                        if drowsiness_info:
+                            drowsy_level = drowsiness_info["level"]
+                            drowsy_class = class_name
+                            drowsy_intensity = drowsiness_info["intensity"]
+                            
+                            # Add to smoothing history
+                            prediction_history.append(drowsy_level)
+                            smoothed_level = sum(prediction_history) / len(prediction_history)
+                            
+                            # Send alert if level changed significantly
+                            if drowsy_level >= ALERT_THRESHOLD and abs(drowsy_level - last_alert_level) >= 1:
+                                use_buzzer = drowsy_level >= BUZZER_THRESHOLD
+                                use_vibrator = drowsy_level >= VIBRATOR_THRESHOLD
+                                
+                                if esp32.activate_alert(drowsy_intensity, use_buzzer, use_vibrator):
+                                    self.log_output(f"🚨 Alert: {class_name} ({confidence:.2f}) - {drowsy_intensity}%", "warning")
+                                
+                                last_alert_level = drowsy_level
+                        else:
+                            # Reset alert level if not drowsy
+                            if last_alert_level > 0:
+                                last_alert_level = 0
+                    
                     # Count detections
                     if results[0].boxes:
                         detection_count += len(results[0].boxes)
@@ -1224,7 +1379,7 @@ class DesktopApp:
                         cx = canvas_w // 2
                         cy = canvas_h // 2
                         
-                        def update_ui(p=photo, x=cx, y=cy, dc=detection_count):
+                        def update_ui(p=photo, x=cx, y=cy, dc=detection_count, dl=drowsy_level, dclass=drowsy_class):
                             if not self.camera_active: return
                             self._current_photo = p
                             if self._camera_image_id is None:
@@ -1244,10 +1399,20 @@ class DesktopApp:
                             self.camera_canvas.image = self._current_photo
                             
                             if hasattr(self, 'camera_info_label'):
-                                self.camera_info_label.config(
-                                    text=f"📹 Camera: Live{mode_str} | 🎯 Detections: {dc}",
-                                    fg="#4CAF50"
-                                )
+                                # Build status text
+                                status = f"📹 Camera: Live{mode_str} | 🎯 Detections: {dc}"
+                                
+                                # Add ESP32 status
+                                if esp32 and esp32.enabled:
+                                    esp32_icon = "🟢" if esp32.connected else "🔴"
+                                    status += f" | {esp32_icon} ESP32"
+                                    
+                                    # Add drowsiness level if detected
+                                    if dl > 0 and dclass:
+                                        level_emoji = ["😊", "😐", "😪", "😴", "💤", "💤"][min(dl, 5)]
+                                        status += f" | {level_emoji} {dclass}"
+                                
+                                self.camera_info_label.config(text=status, fg="#4CAF50")
 
                         self.root.after(0, update_ui)
                         first_frame_shown = True

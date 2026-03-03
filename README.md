@@ -7,6 +7,8 @@
 An opinionated repository for object detection and classification experiments used by the NutriBin project — includes YOLO training
 & detection pipelines, TensorFlow/TFLite model artifacts, helper scripts, and a minimal web demo.
 
+**NEW**: Now includes **Drowsiness Detection System** with ESP32 integration for real-time alerting! 🚨
+
 --
 
 ## Features
@@ -15,6 +17,7 @@ An opinionated repository for object detection and classification experiments us
 - **Image classification (TFLite-ready)**: training scripts and exported models in `tflite/`.
 - **Web demo**: a small Flask app to run inference and show detections in `web/`.
 - **Convenience scripts**: training and test wrappers under `scripts/` and `yolo/scripts/`.
+- **🆕 Drowsiness Detection with ESP32**: Real-time drowsiness monitoring with physical alerts (buzzers + vibrators) via WiFi integration.
 
 ## Repo Layout
 
@@ -43,6 +46,50 @@ If you don't have a `requirements.txt`, install the main libs commonly used here
 ```bash
 pip install flask torch torchvision ultralytics opencv-python matplotlib tensorflow
 ```
+
+## 🚨 Drowsiness Detection System (ESP32 Integration)
+
+This system uses a **Raspberry Pi** running YOLO-based drowsiness detection to monitor driver alertness in real-time. When drowsiness is detected, it sends WiFi commands to an **ESP32 microcontroller** that activates buzzers and vibrator motors to alert the driver.
+
+### System Components
+
+- **Raspberry Pi**: Runs ML model, processes camera feed
+- **ESP32**: WiFi AP, controls buzzers (2x) & vibrators (6x)
+- **Camera**: USB/CSI camera on Raspberry Pi
+- **Alerts**: Progressive intensity based on drowsiness level (0-100%)
+
+### Quick Start (Drowsiness Detection)
+
+```bash
+# 1. Connect Raspberry Pi to ESP32 WiFi
+sudo ./scripts/connect_esp32_wifi.sh
+# SSID: ESP32-Drowsiness-AP | Password: drowsy123
+
+# 2. Quick setup (installs dependencies, tests connection)
+./scripts/quick_start.sh
+
+# 3. Run drowsiness detection
+python scripts/drowsiness_detection_esp32.py
+
+# Or with display
+python scripts/drowsiness_detection_esp32.py --display
+```
+
+### Drowsiness Levels
+
+| Level | Classification | Alert Intensity |
+|-------|----------------|-----------------|
+| 0 | ALERT  FULLY AWAKE | No alert (0%) |
+| 1 | EARLY DROWSINESS | Vibrator (20%) |
+| 2 | MODERATE DROWSINESS | Buzzer + Vibrator (50%) |
+| 3 | MICROSLEEP | Buzzer + Vibrator (80%) |
+| 4-5 | REM SLEEP / STAGE N1-N3 | Maximum (100%) |
+
+### Full Documentation
+
+See **[DROWSINESS_SETUP.md](DROWSINESS_SETUP.md)** for complete setup, configuration, troubleshooting, and API reference.
+
+---
 
 ## YOLO — Train & Test
 

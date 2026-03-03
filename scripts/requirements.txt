@@ -3,3 +3,5 @@ websocket-client
 opencv-python
 numpy
 ultralytics
+requests
+Pillow

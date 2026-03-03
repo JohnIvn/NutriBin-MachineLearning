@@ -1,0 +1,19 @@
+[Unit]
+Description=Drowsiness Detection with ESP32
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=admin
+WorkingDirectory=/home/admin/NutriBin-MachineLearning
+Environment="PATH=/home/admin/NutriBin-MachineLearning/venv/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStartPre=/bin/sleep 10
+ExecStart=/home/admin/NutriBin-MachineLearning/venv/bin/python /home/admin/NutriBin-MachineLearning/scripts/drowsiness_detection_esp32.py --camera 0 --esp32-ip 192.168.4.1
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

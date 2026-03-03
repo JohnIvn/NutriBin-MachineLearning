@@ -1,20 +1,9 @@
 #include <WiFi.h>
-#include <HTTPClient.h>
-#include <BLEDevice.h>
-#include <BLEServer.h>
-#include <BLEUtils.h>
-#include <BLE2902.h>
+#include <WebServer.h>
 
-// WiFi Access Point credentials (for ESP32 to create its own network)
+// WiFi Access Point credentials (ESP32 creates its own network)
 const char* ap_ssid = "ESP32-Drowsiness-AP";
 const char* ap_password = "drowsy123";  // Minimum 8 characters
-
-// Optional: WiFi Station credentials (to connect to existing network)
-const char* sta_ssid = "";  // Leave empty to disable station mode
-const char* sta_password = "";
-
-// Backend server URL (optional - configure if needed)
-const char* serverUrl = "http://192.168.4.2:3000/api/logs";  // Default AP IP is 192.168.4.1
 
 // Pin definitions (adjust based on your wiring)
 // 2 Buzzer pins (will scale like vibrators)
@@ -31,20 +20,12 @@ const int RED_LED_PIN = 4;      // GPIO pin for RED LED (disconnected)
 const int PWM_FREQUENCY = 5000;  // 5 KHz
 const int PWM_RESOLUTION = 8;    // 8-bit resolution (0-255)
 
-// BLE Service and Characteristic UUIDs
-#define SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
-#define COMMAND_CHAR_UUID   "beb5483e-36e1-4688-b7f5-ea07361b26a8"
-#define STATUS_CHAR_UUID    "6e400003-b5a3-f393-e0a9-e50e24dcca9e"
-
 // Device information
 String deviceName = "ESP32-Drowsiness";
 bool deviceConnected = false;
-bool oldDeviceConnected = false;
 
-// BLE objects
-BLEServer* pServer = NULL;
-BLECharacteristic* pCommandCharacteristic = NULL;
-BLECharacteristic* pStatusCharacteristic = NULL;
+// Web Server
+WebServer server(80);
 
 // Control states
 bool buzzerStates[2] = {false, false};
@@ -58,65 +39,45 @@ void activateVibrators(int intensity, int duration);
 void setBuzzerIntensity(int intensity);
 void setVibratorIntensity(int intensity);
 
-// BLE Server Callbacks
-class MyServerCallbacks: public BLEServerCallbacks {
-  void onConnect(BLEServer* pServer) {
-    deviceConnected = true;
+// HTTP Callback - Handle incoming commands
+void handleCommandEndpoint() {
+  if (server.hasArg("plain")) {
+    String body = server.arg("plain");
+    
     Serial.println("\n=================================");
-    Serial.println("[BLE] Client connected!");
-    Serial.println("=================================\n");
+    Serial.println("[COMMAND RECEIVED]");
+    Serial.println("=================================");
+    Serial.printf("Raw body: %s\n", body.c_str());
     
-    // Turn on GREEN LED, turn off RED LED
-    digitalWrite(GREEN_LED_PIN, HIGH);
-    digitalWrite(RED_LED_PIN, LOW);
-    Serial.println("[LED] Status: GREEN ON (Connected)");
-  };
-
-  void onDisconnect(BLEServer* pServer) {
-    deviceConnected = false;
-    Serial.println("\n=================================");
-    Serial.println("[BLE] Client disconnected!");
-    Serial.println("=================================\n");
-    
-    // Turn off GREEN LED, turn on RED LED
-    digitalWrite(GREEN_LED_PIN, LOW);
-    digitalWrite(RED_LED_PIN, HIGH);
-    Serial.println("[LED] Status: RED ON (Disconnected)");
-    
-    // Stop all outputs when disconnected
-    for (int i = 0; i < 2; i++) {
-      ledcWrite(BUZZER_PINS[i], 0);
-      buzzerStates[i] = false;
+    // Parse JSON manually - extract "command" value  
+    String command = "";
+    int commandIdx = body.indexOf("\"command\"");
+    if (commandIdx >= 0) {
+      int colonIdx = body.indexOf(':', commandIdx);
+      int startQuote = body.indexOf('"', colonIdx);
+      int endQuote = body.indexOf('"', startQuote + 1);
+      if (startQuote >= 0 && endQuote > startQuote) {
+        command = body.substring(startQuote + 1, endQuote);
+      }
     }
-    for (int i = 0; i < 6; i++) {
-      ledcWrite(VIBRATOR_PINS[i], 0);
-      vibratorStates[i] = false;
-    }
-    
-    // Restart advertising
-    BLEDevice::startAdvertising();
-    Serial.println("[BLE] Advertising restarted");
-  }
-};
-
-// BLE Characteristic Callbacks - Handle incoming commands
-class CommandCallbacks: public BLECharacteristicCallbacks {
-  void onWrite(BLECharacteristic *pCharacteristic) {
-    String command = pCharacteristic->getValue().c_str();
     
     if (command.length() > 0) {
-      Serial.println("\n=================================");
-      Serial.println("[COMMAND RECEIVED]");
-      Serial.println("=================================");
-      Serial.printf("Raw command: %s\n", command.c_str());
+      Serial.printf("Parsed command: %s\n", command.c_str());
       Serial.println("---------------------------------");
       
       handleCommand(command);
       
       Serial.println("=================================\n");
+      server.send(200, "application/json", "{\"status\":\"success\"}");
+    } else {
+      Serial.println("Failed to parse command");
+      Serial.println("=================================\n");
+      server.send(400, "application/json", "{\"error\":\"Invalid command format\"}");
     }
+  } else {
+    server.send(400, "application/json", "{\"error\":\"No command provided\"}");
   }
-};
+}
 
 void setup() {
   // Initialize serial communication
@@ -124,7 +85,7 @@ void setup() {
   delay(1000);
   Serial.println("\n\n=================================");
   Serial.println("ESP32 Drowsiness Detection Controller");
-  Serial.println("WiFi AP + BLE Mode");
+  Serial.println("WiFi AP Mode");
   Serial.println("=================================\n");
   
   // Initialize WiFi Access Point
@@ -144,27 +105,6 @@ void setup() {
     Serial.println("[WiFi AP] Failed to start Access Point!");
   }
   
-  // Optional: Also connect to existing WiFi network (Station mode)
-  if (strlen(sta_ssid) > 0) {
-    Serial.println("\nAlso connecting to existing WiFi network...");
-    WiFi.mode(WIFI_AP_STA);  // Both AP and Station
-    WiFi.begin(sta_ssid, sta_password);
-    
-    int wifiAttempts = 0;
-    while (WiFi.status() != WL_CONNECTED && wifiAttempts < 20) {
-      delay(500);
-      Serial.print(".");
-      wifiAttempts++;
-    }
-    
-    if (WiFi.status() == WL_CONNECTED) {
-      Serial.println("\n[WiFi STA] Connected to existing network!");
-      Serial.printf("Station IP: %s\n", WiFi.localIP().toString().c_str());
-    } else {
-      Serial.println("\n[WiFi STA] Connection failed, continuing with AP only...");
-    }
-  }
-  
   Serial.println();
   
   // CRITICAL: Set pin modes FIRST before PWM
@@ -181,11 +121,11 @@ void setup() {
   // Initialize LED status pins
   pinMode(GREEN_LED_PIN, OUTPUT);
   pinMode(RED_LED_PIN, OUTPUT);
-  digitalWrite(GREEN_LED_PIN, LOW);  // Start with GREEN off
-  digitalWrite(RED_LED_PIN, HIGH);   // Start with RED on (disconnected)
+  digitalWrite(GREEN_LED_PIN, HIGH);  // Start with GREEN on (WiFi AP is always ready)
+  digitalWrite(RED_LED_PIN, LOW);     // Start with RED off
   
   Serial.println("GPIO pins set as OUTPUT");
-  Serial.println("[LED] Initial state: RED ON (waiting for connection)");
+  Serial.println("[LED] Initial state: GREEN ON (WiFi AP ready)");
   
   // Initialize PWM - ESP32 Arduino Core 3.0+ API
   for (int i = 0; i < 2; i++) {
@@ -234,65 +174,29 @@ void setup() {
   }
   Serial.println("=== HARDWARE TEST COMPLETE ===\n");
   
-  // Initialize BLE
-  Serial.println("Initializing BLE...");
-  BLEDevice::init(deviceName.c_str());
-  
-  // Create BLE Server
-  pServer = BLEDevice::createServer();
-  pServer->setCallbacks(new MyServerCallbacks());
-  
-  // Create BLE Service
-  BLEService *pService = pServer->createService(SERVICE_UUID);
-  
-  // Create Command Characteristic (Write)
-  pCommandCharacteristic = pService->createCharacteristic(
-    COMMAND_CHAR_UUID,
-    BLECharacteristic::PROPERTY_WRITE
-  );
-  pCommandCharacteristic->setCallbacks(new CommandCallbacks());
-  
-  // Create Status Characteristic (Read & Notify)
-  pStatusCharacteristic = pService->createCharacteristic(
-    STATUS_CHAR_UUID,
-    BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY
-  );
-  pStatusCharacteristic->addDescriptor(new BLE2902());
-  
-  // Start the service
-  pService->start();
-  
-  // Start advertising
-  BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
-  pAdvertising->addServiceUUID(SERVICE_UUID);
-  pAdvertising->setScanResponse(true);
-  pAdvertising->setMinPreferred(0x06);
-  pAdvertising->setMaxPreferred(0x12);
-  BLEDevice::startAdvertising();
+  // Initialize HTTP Web Server
+  Serial.println("Initializing HTTP Web Server...");
+  server.on("/command", HTTP_POST, handleCommandEndpoint);
+  server.enableCORS(true);
+  server.begin();
   
   Serial.println("\n=================================");
-  Serial.println("BLE Server started!");
+  Serial.println("HTTP Web Server started!");
+  Serial.printf("Server URL: http://%s/command\n", WiFi.softAPIP().toString().c_str());
   Serial.printf("Device Name: %s\n", deviceName.c_str());
-  Serial.println("Waiting for connections...");
+  Serial.println("Ready for commands...");
   Serial.println("=================================\n");
+  
+  // WiFi AP is always connected
+  deviceConnected = true;
 }
 
 void loop() {
-  // Handle connection state changes
-  if (deviceConnected && !oldDeviceConnected) {
-    oldDeviceConnected = deviceConnected;
-    // Send initial status when connected
-    updateStatus();
-  }
-  
-  if (!deviceConnected && oldDeviceConnected) {
-    oldDeviceConnected = deviceConnected;
-  }
-  
+  server.handleClient();
   delay(20);
 }
 
-// Command handler - parses and executes commands from BLE
+// Command handler - parses and executes commands from HTTP
 void handleCommand(String command) {
   command.trim();
   
@@ -411,30 +315,26 @@ void handleCommand(String command) {
   }
 }
 
-// Update status characteristic
+// Update status
 void updateStatus() {
-  if (deviceConnected && pStatusCharacteristic != NULL) {
-    bool anyBuzzerOn = false;
-    for (int i = 0; i < 2; i++) {
-      if (buzzerStates[i]) {
-        anyBuzzerOn = true;
-        break;
-      }
+  bool anyBuzzerOn = false;
+  for (int i = 0; i < 2; i++) {
+    if (buzzerStates[i]) {
+      anyBuzzerOn = true;
+      break;
     }
-    bool anyVibratorOn = false;
-    for (int i = 0; i < 6; i++) {
-      if (vibratorStates[i]) {
-        anyVibratorOn = true;
-        break;
-      }
-    }
-    String status = String(anyBuzzerOn ? "1" : "0") + "," + String(anyVibratorOn ? "1" : "0");
-    pStatusCharacteristic->setValue(status.c_str());
-    pStatusCharacteristic->notify();
-    Serial.printf("[STATUS] Buzzers=%s, Vibrators=%s (notified)\n", 
-                  anyBuzzerOn ? "ON" : "OFF", 
-                  anyVibratorOn ? "ON" : "OFF");
   }
+  bool anyVibratorOn = false;
+  for (int i = 0; i < 6; i++) {
+    if (vibratorStates[i]) {
+      anyVibratorOn = true;
+      break;
+    }
+  }
+  
+  Serial.printf("[STATUS] Buzzers=%s, Vibrators=%s\n", 
+                anyBuzzerOn ? "ON" : "OFF", 
+                anyVibratorOn ? "ON" : "OFF");
 }
 
 // Helper functions for device control with PWM intensity
