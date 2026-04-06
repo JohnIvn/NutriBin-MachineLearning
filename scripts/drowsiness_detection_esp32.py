@@ -36,18 +36,19 @@ ESP32_COMMAND_ENDPOINT = "/command"
 
 # Drowsiness level mapping to intensity
 DROWSINESS_LEVELS = {
-    "ALERT  FULLY AWAKE": {"level": 0, "intensity": 0, "description": "Fully awake"},
-    "EARLY DROWSINESS": {"level": 1, "intensity": 20, "description": "Early signs"},
-    "MODERATE DROWSINESS": {"level": 2, "intensity": 50, "description": "Moderate"},
-    "MICROSLEEP": {"level": 3, "intensity": 80, "description": "Microsleep detected"},
-    "REM SLEEP": {"level": 4, "intensity": 100, "description": "REM sleep"},
-    "STAGE N1 N2 N3": {"level": 5, "intensity": 100, "description": "Deep sleep"}
+    "ALERT  FULLY AWAKE": {"level": 0, "description": "Fully awake"},
+    "EARLY DROWSINESS": {"level": 1, "description": "Early signs"},
+    "MODERATE DROWSINESS": {"level": 2, "description": "Moderate"},
+    "MICROSLEEP": {"level": 3, "description": "Microsleep detected"},
+    "REM SLEEP": {"level": 4, "description": "REM sleep"},
+    "STAGE N1 N2 N3": {"level": 5, "description": "Deep sleep"}
 }
 
 # Alert thresholds
 ALERT_THRESHOLD = 1  # Start alerting at EARLY DROWSINESS
 BUZZER_THRESHOLD = 2  # Use buzzer at MODERATE and above
 VIBRATOR_THRESHOLD = 1  # Use vibrator at EARLY and above
+DETECTION_HOLD_SECONDS = 3.0  # Require 3 seconds of continuous detection before alerting
 
 # Smoothing settings
 SMOOTHING_WINDOW = 5  # Average predictions over last N frames for stability
@@ -109,25 +110,9 @@ class ESP32Controller:
             self.connected = False
             return False
     
-    def activate_alert(self, intensity, use_buzzer=True, use_vibrator=True):
-        """Activate buzzer and/or vibrator at specified intensity (0-100)"""
-        success = True
-        
-        if use_buzzer and intensity > 0:
-            command = f"TEST:buzzer:{intensity}"
-            if self.send_command(command):
-                print(f"  ✓ Buzzer activated at {intensity}%")
-            else:
-                success = False
-                
-        if use_vibrator and intensity > 0:
-            command = f"TEST:vibrator:{intensity}"
-            if self.send_command(command):
-                print(f"  ✓ Vibrator activated at {intensity}%")
-            else:
-                success = False
-                
-        return success
+    def send_alert_signal(self):
+        """Send a single generic alert signal to the ESP32."""
+        return self.send_command("ALERT:high")
 
 
 class DrowsinessDetector:
@@ -268,10 +253,10 @@ def main():
     if args.test_esp32:
         print("\nTesting ESP32 devices...")
         print("Testing buzzer at 50% intensity...")
-        esp32.activate_alert(50, use_buzzer=True, use_vibrator=False)
+        esp32.send_command("TEST:buzzer:50")
         time.sleep(4)
         print("Testing vibrator at 50% intensity...")
-        esp32.activate_alert(50, use_buzzer=False, use_vibrator=True)
+        esp32.send_command("TEST:vibrator:50")
         print("\nTest complete!")
         return
     
@@ -311,6 +296,9 @@ def main():
     
     frame_count = 0
     last_alert_level = 0
+    detection_hold_start = None
+    detection_hold_class = None
+    alert_sent_for_hold = False
     display_supported = args.display
     
     try:
@@ -332,19 +320,27 @@ def main():
             
             # Determine if alert is needed
             if drowsiness_info and current_level >= ALERT_THRESHOLD:
-                intensity = drowsiness_info["intensity"]
                 description = drowsiness_info["description"]
+                current_time = time.monotonic()
+
+                if detection_hold_class != class_name:
+                    detection_hold_class = class_name
+                    detection_hold_start = current_time
+                    alert_sent_for_hold = False
+                elif detection_hold_start is None:
+                    detection_hold_start = current_time
+                    alert_sent_for_hold = False
+
+                hold_duration = current_time - detection_hold_start
                 
                 print(f"\n[Frame {frame_count}] {class_name} ({confidence:.2f})")
-                print(f"  Level: {current_level} | Smoothed: {smoothed_level:.1f}")
-                print(f"  Intensity: {intensity}%")
+                print(f"  Level: {current_level} | Smoothed: {smoothed_level:.1f} | Held: {hold_duration:.1f}s")
+                print(f"  Status: {description}")
                 
-                # Only send alert if level changed significantly
-                if abs(current_level - last_alert_level) >= 1:
-                    use_buzzer = current_level >= BUZZER_THRESHOLD
-                    use_vibrator = current_level >= VIBRATOR_THRESHOLD
-                    
-                    esp32.activate_alert(intensity, use_buzzer, use_vibrator)
+                # Only send the alert signal after the detection has been stable for 3 seconds
+                if hold_duration >= DETECTION_HOLD_SECONDS and not alert_sent_for_hold:
+                    esp32.send_alert_signal()
+                    alert_sent_for_hold = True
                     last_alert_level = current_level
             else:
                 # Print status every 30 frames when alert
@@ -355,6 +351,9 @@ def main():
                 # Reset alert level when returning to normal
                 if last_alert_level > 0:
                     last_alert_level = 0
+                detection_hold_start = None
+                detection_hold_class = None
+                alert_sent_for_hold = False
             
             # Display frame if requested
             if display_supported:

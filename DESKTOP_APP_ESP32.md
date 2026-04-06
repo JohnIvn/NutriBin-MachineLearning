@@ -168,12 +168,13 @@ self.command_cooldown = 2.0  # 2 seconds
 │  2. YOLO model detects drowsiness class              │
 │  3. Lookup class in DROWSINESS_LEVELS                │
 │  4. Add to smoothing history (5 frames)              │
-│  5. If level >= threshold:                           │
-│     a. Determine buzzer/vibrator usage               │
-│     b. Send HTTP POST to ESP32                       │
-│     c. ESP32 activates devices at intensity%         │
-│     d. Update UI with emoji & status                 │
-│     e. Log alert to console                          │
+│  5. Hold the same drowsiness class for 3 seconds     │
+│  6. If level >= threshold after hold:                │
+│     a. Send one generic alert signal                 │
+│     b. POST http://192.168.4.1/command              │
+│     c. ESP32 decides the output pattern             │
+│     d. Update UI with emoji & status                │
+│     e. Log alert to console                         │
 └──────────────────────────────────────────────────────┘
 ```
 

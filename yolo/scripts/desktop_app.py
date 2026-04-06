@@ -27,12 +27,12 @@ from collections import deque
 
 # Drowsiness level mapping for ESP32 integration
 DROWSINESS_LEVELS = {
-    "ALERT  FULLY AWAKE": {"level": 0, "intensity": 0, "description": "Fully awake"},
-    "EARLY DROWSINESS": {"level": 1, "intensity": 20, "description": "Early signs"},
-    "MODERATE DROWSINESS": {"level": 2, "intensity": 50, "description": "Moderate"},
-    "MICROSLEEP": {"level": 3, "intensity": 80, "description": "Microsleep detected"},
-    "REM SLEEP": {"level": 4, "intensity": 100, "description": "REM sleep"},
-    "STAGE N1 N2 N3": {"level": 5, "intensity": 100, "description": "Deep sleep"}
+    "ALERT  FULLY AWAKE": {"level": 0, "description": "Fully awake"},
+    "EARLY DROWSINESS": {"level": 1, "description": "Early signs"},
+    "MODERATE DROWSINESS": {"level": 2, "description": "Moderate"},
+    "MICROSLEEP": {"level": 3, "description": "Microsleep detected"},
+    "REM SLEEP": {"level": 4, "description": "REM sleep"},
+    "STAGE N1 N2 N3": {"level": 5, "description": "Deep sleep"}
 }
 
 ALERT_THRESHOLD = 1
@@ -97,6 +97,10 @@ class ESP32Controller:
         if use_vibrator:
             success &= self.send_command(f"TEST:vibrator:{intensity}")
         return success
+
+    def send_alert_signal(self):
+        """Send a single generic alert signal to the ESP32."""
+        return self.send_command("ALERT:high")
 
 
 class ParametersDialog(tk.Toplevel):
@@ -515,7 +519,7 @@ class ParametersDialog(tk.Toplevel):
 class DesktopApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("NutriBin ML - YOLO Model Manager")
+        self.root.title("Anti Drowsy ML - YOLO Model Manager")
         self.root.geometry("1400x900")
         self.root.resizable(True, True)
         
@@ -594,7 +598,7 @@ class DesktopApp:
         title_frame = tk.Frame(header_content, bg=self.header_color)
         title_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
-        title = tk.Label(title_frame, text="NutriBin ML", font=("Arial", 22, "bold"), 
+        title = tk.Label(title_frame, text="Anti Drowsy ML", font=("Arial", 22, "bold"), 
                         fg="white", bg=self.header_color)
         title.pack(anchor=tk.W)
         
@@ -1220,6 +1224,9 @@ class DesktopApp:
         # Drowsiness detection state
         prediction_history = deque(maxlen=SMOOTHING_WINDOW)
         last_alert_level = 0
+        detection_hold_start = None
+        detection_hold_class = None
+        alert_sent_for_hold = False
         
         try:
             # Import YOLO
@@ -1301,7 +1308,6 @@ class DesktopApp:
                     # Drowsiness detection and ESP32 alert
                     drowsy_level = 0
                     drowsy_class = ""
-                    drowsy_intensity = 0
                     
                     if esp32 and esp32.enabled and results[0].boxes is not None and len(results[0].boxes) > 0:
                         # Get detection with highest confidence
@@ -1316,27 +1322,38 @@ class DesktopApp:
                         drowsiness_info = DROWSINESS_LEVELS.get(class_name)
                         
                         if drowsiness_info:
+                            current_time = time.monotonic()
                             drowsy_level = drowsiness_info["level"]
                             drowsy_class = class_name
-                            drowsy_intensity = drowsiness_info["intensity"]
+                            drowsy_description = drowsiness_info["description"]
+
+                            if detection_hold_class != class_name:
+                                detection_hold_class = class_name
+                                detection_hold_start = current_time
+                                alert_sent_for_hold = False
+                            elif detection_hold_start is None:
+                                detection_hold_start = current_time
+                                alert_sent_for_hold = False
                             
                             # Add to smoothing history
                             prediction_history.append(drowsy_level)
                             smoothed_level = sum(prediction_history) / len(prediction_history)
+                            hold_duration = current_time - detection_hold_start
                             
-                            # Send alert if level changed significantly
-                            if drowsy_level >= ALERT_THRESHOLD and abs(drowsy_level - last_alert_level) >= 1:
-                                use_buzzer = drowsy_level >= BUZZER_THRESHOLD
-                                use_vibrator = drowsy_level >= VIBRATOR_THRESHOLD
+                            # Send alert only after the detection has been stable for 3 seconds
+                            if drowsy_level >= ALERT_THRESHOLD and hold_duration >= 3.0 and not alert_sent_for_hold:
+                                if esp32.send_alert_signal():
+                                    self.log_output(f"🚨 Alert: {class_name} ({confidence:.2f}) - {drowsy_description}", "warning")
                                 
-                                if esp32.activate_alert(drowsy_intensity, use_buzzer, use_vibrator):
-                                    self.log_output(f"🚨 Alert: {class_name} ({confidence:.2f}) - {drowsy_intensity}%", "warning")
-                                
+                                alert_sent_for_hold = True
                                 last_alert_level = drowsy_level
                         else:
                             # Reset alert level if not drowsy
                             if last_alert_level > 0:
                                 last_alert_level = 0
+                            detection_hold_start = None
+                            detection_hold_class = None
+                            alert_sent_for_hold = False
                     
                     # Count detections
                     if results[0].boxes:

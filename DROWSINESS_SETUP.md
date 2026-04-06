@@ -2,7 +2,7 @@
 
 ## System Overview
 
-This system uses a Raspberry Pi to run YOLO-based drowsiness detection and sends real-time alerts to an ESP32 microcontroller that activates buzzers and vibrator motors based on the detected drowsiness level.
+This system uses a Raspberry Pi to run YOLO-based drowsiness detection and sends a generic alert signal to an ESP32 microcontroller after the same drowsiness stage is detected continuously for 3 seconds.
 
 ### Components
 
@@ -14,14 +14,14 @@ This system uses a Raspberry Pi to run YOLO-based drowsiness detection and sends
 
 ### Drowsiness Levels
 
-| Level | Class Name | Intensity | Alert Type |
-|-------|------------|-----------|------------|
-| 0 | ALERT  FULLY AWAKE | 0% | No alert |
-| 1 | EARLY DROWSINESS | 20% | Vibrator only |
-| 2 | MODERATE DROWSINESS | 50% | Vibrator + Buzzer |
-| 3 | MICROSLEEP | 80% | Vibrator + Buzzer |
-| 4 | REM SLEEP | 100% | Vibrator + Buzzer |
-| 5 | STAGE N1 N2 N3 | 100% | Vibrator + Buzzer |
+| Level | Class Name | Purpose |
+|-------|------------|---------|
+| 0 | ALERT  FULLY AWAKE | No signal |
+| 1 | EARLY DROWSINESS | Trigger alert signal |
+| 2 | MODERATE DROWSINESS | Trigger alert signal |
+| 3 | MICROSLEEP | Trigger alert signal |
+| 4 | REM SLEEP | Trigger alert signal |
+| 5 | STAGE N1 N2 N3 | Trigger alert signal |
 
 ---
 

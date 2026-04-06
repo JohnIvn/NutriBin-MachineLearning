@@ -1,5 +1,6 @@
 #include <WiFi.h>
 #include <WebServer.h>
+#include <Preferences.h>
 
 // WiFi Access Point credentials (ESP32 creates its own network)
 const char* ap_ssid = "ESP32-Drowsiness-AP";
@@ -16,6 +17,9 @@ const int VIBRATOR_PINS[6] = {26, 27, 14, 12, 13, 15};  // GPIO pins for 6 vibra
 const int GREEN_LED_PIN = 2;    // GPIO pin for GREEN LED (connected)
 const int RED_LED_PIN = 4;      // GPIO pin for RED LED (disconnected)
 
+// GPIO Inter-Board Communication
+const int GPIO_BT_TRIGGER = 5;  // GPIO pin to receive trigger from Bluetooth ESP32
+
 // PWM settings for intensity control
 const int PWM_FREQUENCY = 5000;  // 5 KHz
 const int PWM_RESOLUTION = 8;    // 8-bit resolution (0-255)
@@ -26,16 +30,32 @@ bool deviceConnected = false;
 
 // Web Server
 WebServer server(80);
+Preferences preferences;
 
 // Control states
 bool buzzerStates[2] = {false, false};
 bool vibratorStates[6] = {false, false, false, false, false, false};
+bool buzzerTimedActive = false;
+bool vibratorTimedActive = false;
+unsigned long buzzerStopAt = 0;
+unsigned long vibratorStopAt = 0;
+int savedBuzzerIntensity = 100;
+int savedVibratorIntensity = 100;
+
+// GPIO and Command forwarding
+bool lastGPIOState = LOW;
+String lastReceivedCommand = "";  // Store last command to execute when triggered
 
 // Forward declarations
 void handleCommand(String command);
+void processTimedOutputs();
 void updateStatus();
 void activateBuzzer(int intensity, int duration);
 void activateVibrators(int intensity, int duration);
+void startBuzzerTest(int intensity, int duration);
+void startVibratorTest(int intensity, int duration);
+void loadSavedIntensities();
+void saveIntensitySetting(const String& device, int intensity);
 void setBuzzerIntensity(int intensity);
 void setVibratorIntensity(int intensity);
 
@@ -62,6 +82,9 @@ void handleCommandEndpoint() {
     }
     
     if (command.length() > 0) {
+      // Store the command for potential GPIO forwarding to Bluetooth ESP32
+      lastReceivedCommand = command;
+      
       Serial.printf("Parsed command: %s\n", command.c_str());
       Serial.println("---------------------------------");
       
@@ -87,6 +110,9 @@ void setup() {
   Serial.println("ESP32 Drowsiness Detection Controller");
   Serial.println("WiFi AP Mode");
   Serial.println("=================================\n");
+
+  preferences.begin("drowsy-config", false);
+  loadSavedIntensities();
   
   // Initialize WiFi Access Point
   Serial.println("Starting WiFi Access Point...");
@@ -124,6 +150,10 @@ void setup() {
   digitalWrite(GREEN_LED_PIN, HIGH);  // Start with GREEN on (WiFi AP is always ready)
   digitalWrite(RED_LED_PIN, LOW);     // Start with RED off
   
+  // Initialize GPIO inter-board communication pin (as INPUT to receive from Bluetooth ESP32)
+  pinMode(GPIO_BT_TRIGGER, INPUT);
+  lastGPIOState = digitalRead(GPIO_BT_TRIGGER);
+  
   Serial.println("GPIO pins set as OUTPUT");
   Serial.println("[LED] Initial state: GREEN ON (WiFi AP ready)");
   
@@ -150,6 +180,8 @@ void setup() {
   Serial.println("  - LED Status Indicators:");
   Serial.printf("    - GREEN LED (Connected): GPIO %d\n", GREEN_LED_PIN);
   Serial.printf("    - RED LED (Disconnected): GPIO %d\n", RED_LED_PIN);
+  Serial.println("  - GPIO Inter-Board Communication:");
+  Serial.printf("    - Bluetooth Trigger Input: GPIO %d (receive forwarded commands from Bluetooth ESP32)\n", GPIO_BT_TRIGGER);
   Serial.printf("  - PWM Frequency: %d Hz\n", PWM_FREQUENCY);
   Serial.printf("  - PWM Resolution: %d-bit (0-255)\n\n", PWM_RESOLUTION);
   
@@ -193,7 +225,43 @@ void setup() {
 
 void loop() {
   server.handleClient();
+  processTimedOutputs();
+  
+  // Check for GPIO trigger from Bluetooth ESP32
+  bool currentGPIOState = digitalRead(GPIO_BT_TRIGGER);
+  
+  // Detect rising edge (LOW to HIGH transition)
+  if (currentGPIOState == HIGH && lastGPIOState == LOW) {
+    Serial.println("\n[GPIO] Trigger received from Bluetooth ESP32!");
+    if (lastReceivedCommand.length() > 0) {
+      Serial.printf("[GPIO] Executing forwarded command: %s\n", lastReceivedCommand.c_str());
+      handleCommand(lastReceivedCommand);
+    }
+  }
+  
+  lastGPIOState = currentGPIOState;
+  
   delay(20);
+}
+
+void processTimedOutputs() {
+  const unsigned long now = millis();
+
+  if (buzzerTimedActive && static_cast<long>(now - buzzerStopAt) >= 0) {
+    buzzerTimedActive = false;
+    buzzerStopAt = 0;
+    setBuzzerIntensity(0);
+    Serial.println("  > Buzzers OFF");
+    updateStatus();
+  }
+
+  if (vibratorTimedActive && static_cast<long>(now - vibratorStopAt) >= 0) {
+    vibratorTimedActive = false;
+    vibratorStopAt = 0;
+    setVibratorIntensity(0);
+    Serial.println("  > Vibrators OFF");
+    updateStatus();
+  }
 }
 
 // Command handler - parses and executes commands from HTTP
@@ -224,21 +292,34 @@ void handleCommand(String command) {
     
     if (testType == "buzzer") {
       Serial.println("Testing BUZZER...");
-      activateBuzzer(intensity, duration);
+      startBuzzerTest(intensity, duration);
     }
     else if (testType == "vibrator") {
       Serial.println("Testing VIBRATORS...");
-      activateVibrators(intensity, duration);
+      startVibratorTest(intensity, duration);
     }
     else if (testType == "both" || testType == "full") {
       Serial.println("Testing ALL devices...");
-      activateBuzzer(intensity, duration);
-      delay(100);
-      activateVibrators(intensity, duration);
+      startBuzzerTest(intensity, duration);
+      startVibratorTest(intensity, duration);
     }
     
-    Serial.println("Test completed!");
+    Serial.println("Test started!");
     updateStatus();
+  }
+  else if (command.startsWith("SAVE:")) {
+    int firstColon = command.indexOf(':');
+    int secondColon = command.indexOf(':', firstColon + 1);
+
+    String device = command.substring(firstColon + 1, secondColon);
+    int intensity = command.substring(secondColon + 1).toInt();
+
+    if (intensity < 0) intensity = 0;
+    if (intensity > 100) intensity = 100;
+
+    Serial.printf("Saving %s intensity: %d%%\n", device.c_str(), intensity);
+    saveIntensitySetting(device, intensity);
+    Serial.println("Save completed!");
   }
   else if (command.startsWith("CONTROL:")) {
     int firstColon = command.indexOf(':');
@@ -252,11 +333,15 @@ void handleCommand(String command) {
     Serial.printf("Device: %s, State: %s\n", device.c_str(), turnOn ? "ON" : "OFF");
     
     if (device == "buzzer") {
+      buzzerTimedActive = false;
+      buzzerStopAt = 0;
       int intensity = turnOn ? 100 : 0;
       setBuzzerIntensity(intensity);
       Serial.printf("All buzzers turned %s\n", turnOn ? "ON" : "OFF");
     }
     else if (device == "vibrator") {
+      vibratorTimedActive = false;
+      vibratorStopAt = 0;
       int intensity = turnOn ? 100 : 0;
       setVibratorIntensity(intensity);
       Serial.printf("All vibrators turned %s\n", turnOn ? "ON" : "OFF");
@@ -295,6 +380,10 @@ void handleCommand(String command) {
   }
   else if (command == "STOP") {
     Serial.println("Stopping all devices...");
+    buzzerTimedActive = false;
+    vibratorTimedActive = false;
+    buzzerStopAt = 0;
+    vibratorStopAt = 0;
     for (int i = 0; i < 2; i++) {
       ledcWrite(BUZZER_PINS[i], 0);
       buzzerStates[i] = false;
@@ -312,6 +401,29 @@ void handleCommand(String command) {
   }
   else {
     Serial.printf("Unknown command: %s\n", command.c_str());
+  }
+}
+
+void loadSavedIntensities() {
+  savedBuzzerIntensity = preferences.getUChar("buzzerPct", 100);
+  savedVibratorIntensity = preferences.getUChar("vibPct", 100);
+
+  Serial.println("=================================");
+  Serial.println("[STARTUP] Saved Configuration");
+  Serial.println("=================================");
+  Serial.printf("Buzzer Intensity: %d%%\n", savedBuzzerIntensity);
+  Serial.printf("Vibrator Intensity: %d%%\n", savedVibratorIntensity);
+  Serial.println("=================================\n");
+}
+
+void saveIntensitySetting(const String& device, int intensity) {
+  if (device == "buzzer") {
+    savedBuzzerIntensity = intensity;
+    preferences.putUChar("buzzerPct", static_cast<uint8_t>(intensity));
+  }
+  else if (device == "vibrator") {
+    savedVibratorIntensity = intensity;
+    preferences.putUChar("vibPct", static_cast<uint8_t>(intensity));
   }
 }
 
@@ -352,6 +464,20 @@ void activateVibrators(int intensity, int duration) {
   delay(duration);
   setVibratorIntensity(0);
   Serial.println("  > Vibrators OFF");
+}
+
+void startBuzzerTest(int intensity, int duration) {
+  setBuzzerIntensity(intensity);
+  buzzerTimedActive = true;
+  buzzerStopAt = millis() + static_cast<unsigned long>(duration);
+  Serial.printf("  > Buzzers activated for %d ms\n", duration);
+}
+
+void startVibratorTest(int intensity, int duration) {
+  setVibratorIntensity(intensity);
+  vibratorTimedActive = true;
+  vibratorStopAt = millis() + static_cast<unsigned long>(duration);
+  Serial.printf("  > Vibrators activated for %d ms\n", duration);
 }
 
 // Set buzzer intensity with progressive scaling (same as vibrators but for 2 buzzers)

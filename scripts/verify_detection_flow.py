@@ -9,12 +9,12 @@ from pathlib import Path
 
 # Test the drowsiness level mapping
 DROWSINESS_LEVELS = {
-    "ALERT  FULLY AWAKE": {"level": 0, "intensity": 0, "description": "Fully awake"},
-    "EARLY DROWSINESS": {"level": 1, "intensity": 20, "description": "Early signs"},
-    "MODERATE DROWSINESS": {"level": 2, "intensity": 50, "description": "Moderate"},
-    "MICROSLEEP": {"level": 3, "intensity": 80, "description": "Microsleep detected"},
-    "REM SLEEP": {"level": 4, "intensity": 100, "description": "REM sleep"},
-    "STAGE N1 N2 N3": {"level": 5, "intensity": 100, "description": "Deep sleep"}
+    "ALERT  FULLY AWAKE": {"level": 0, "description": "Fully awake"},
+    "EARLY DROWSINESS": {"level": 1, "description": "Early signs"},
+    "MODERATE DROWSINESS": {"level": 2, "description": "Moderate"},
+    "MICROSLEEP": {"level": 3, "description": "Microsleep detected"},
+    "REM SLEEP": {"level": 4, "description": "REM sleep"},
+    "STAGE N1 N2 N3": {"level": 5, "description": "Deep sleep"}
 }
 
 ALERT_THRESHOLD = 1
@@ -72,27 +72,15 @@ for class_name, confidence in test_cases:
         continue
     
     level = drowsiness_info["level"]
-    intensity = drowsiness_info["intensity"]
+    description = drowsiness_info["description"]
     
     print(f"Detection: {class_name} (confidence: {confidence:.2f})")
-    print(f"  → Level: {level}, Intensity: {intensity}%")
+    print(f"  → Level: {level}, Status: {description}")
     
     if level >= ALERT_THRESHOLD:
-        use_buzzer = level >= BUZZER_THRESHOLD
-        use_vibrator = level >= VIBRATOR_THRESHOLD
-        
-        devices = []
-        if use_vibrator:
-            devices.append("Vibrator")
-        if use_buzzer:
-            devices.append("Buzzer")
-        
-        print(f"  → ALERT TRIGGERED: {' + '.join(devices)}")
-        print(f"  → ESP32 Commands:")
-        if use_buzzer:
-            print(f"     • POST /command {{'command': 'TEST:buzzer:{intensity}'}}")
-        if use_vibrator:
-            print(f"     • POST /command {{'command': 'TEST:vibrator:{intensity}'}}")
+        print(f"  → ALERT TRIGGERED after 3-second hold")
+        print(f"  → ESP32 Command:")
+        print(f"     • POST /command {{'command': 'ALERT:high'}}")
     else:
         print(f"  → No alert (level {level} < threshold {ALERT_THRESHOLD})")
     
@@ -120,10 +108,11 @@ print()
 print("1. Camera captures frame")
 print("2. YOLO model detects drowsiness class")
 print("3. Class name is looked up in DROWSINESS_LEVELS")
-print("4. If level >= 1 (EARLY DROWSINESS or higher):")
-print("   a. Extract intensity (0-100%)")
-print("   b. Send HTTP POST to http://192.168.4.1/command")
-print("   c. ESP32 activates buzzer/vibrator")
+print("4. If level >= 1 (EARLY DROWSINESS or higher), the same class must persist for 3 seconds:")
+print("   a. Track the detection hold time")
+print("   b. Send a single generic alert signal")
+print("   c. POST http://192.168.4.1/command with {\"command\": \"ALERT:high\"}")
+print("   d. ESP32 decides its own output pattern")
 print()
 print("✓ Flow verified! Run this to start detection:")
 print("  python scripts/drowsiness_detection_esp32.py")
