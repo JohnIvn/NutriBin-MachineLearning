@@ -80,7 +80,7 @@ for class_name, confidence in test_cases:
     if level >= ALERT_THRESHOLD:
         print(f"  → ALERT TRIGGERED after 3-second hold")
         print(f"  → ESP32 Command:")
-        print(f"     • POST /command {{'command': 'ALERT:high'}}")
+        print(f"     • POST /command {{'command': 'ALERT'}}")
     else:
         print(f"  → No alert (level {level} < threshold {ALERT_THRESHOLD})")
     
@@ -111,7 +111,7 @@ print("3. Class name is looked up in DROWSINESS_LEVELS")
 print("4. If level >= 1 (EARLY DROWSINESS or higher), the same class must persist for 3 seconds:")
 print("   a. Track the detection hold time")
 print("   b. Send a single generic alert signal")
-print("   c. POST http://192.168.4.1/command with {\"command\": \"ALERT:high\"}")
+print("   c. POST http://192.168.4.1/command with {\"command\": \"ALERT\"}")
 print("   d. ESP32 decides its own output pattern")
 print()
 print("✓ Flow verified! Run this to start detection:")

@@ -100,7 +100,7 @@ class ESP32Controller:
 
     def send_alert_signal(self):
         """Send a single generic alert signal to the ESP32."""
-        return self.send_command("ALERT:high")
+        return self.send_command("ALERT")
 
 
 class ParametersDialog(tk.Toplevel):
@@ -572,28 +572,6 @@ class DesktopApp:
         # Header content
         header_content = tk.Frame(header, bg=self.header_color)
         header_content.pack(fill=tk.BOTH, expand=True, padx=30, pady=12)
-        
-        # Logo area with actual image
-        logo_frame = tk.Frame(header_content, bg=self.header_color)
-        logo_frame.pack(side=tk.LEFT, anchor=tk.CENTER, padx=(0, 20))
-        
-        try:
-            logo_path = self.yolo_root / 'public' / 'logo.png'
-            # print(f"Looking for logo at: {logo_path}")
-            # print(f"Logo exists: {logo_path.exists()}")
-            if logo_path.exists():
-                logo_img = Image.open(str(logo_path))
-                logo_img = logo_img.resize((60, 73), Image.Resampling.LANCZOS)
-                self.logo_photo = ImageTk.PhotoImage(logo_img)
-                logo_label = tk.Label(logo_frame, image=self.logo_photo, bg=self.header_color)
-                logo_label.pack()
-            else:
-                raise FileNotFoundError(f"Logo not found at {logo_path}")
-        except Exception as e:
-            print(f"Error loading logo: {e}")
-            # Fallback to emoji if image loading fails
-            logo_text = tk.Label(logo_frame, text="🥬", font=("Arial", 32), bg=self.header_color)
-            logo_text.pack()
         
         title_frame = tk.Frame(header_content, bg=self.header_color)
         title_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)

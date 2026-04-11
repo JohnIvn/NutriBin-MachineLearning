@@ -112,7 +112,7 @@ class ESP32Controller:
     
     def send_alert_signal(self):
         """Send a single generic alert signal to the ESP32."""
-        return self.send_command("ALERT:high")
+        return self.send_command("ALERT")
 
 
 class DrowsinessDetector:
