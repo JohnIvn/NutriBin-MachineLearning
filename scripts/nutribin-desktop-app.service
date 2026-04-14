@@ -2,8 +2,6 @@
 Description=NutriBin Desktop App
 After=graphical.target network-online.target
 Wants=network-online.target
-Wants=drowsiness-detection.service
-After=drowsiness-detection.service
 
 [Service]
 Type=simple

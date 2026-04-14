@@ -286,7 +286,7 @@ class ParametersDialog(tk.Toplevel):
                                 "GPU/CPU selection (default: auto)")
             
             self.add_section_title(scrollable_frame, "ESP32 Drowsiness Alert (Optional)")
-            self.add_checkbox_field(scrollable_frame, "Enable ESP32", "esp32_enable", False,
+            self.add_checkbox_field(scrollable_frame, "Enable ESP32", "esp32_enable", True,
                                   "Send alerts to ESP32 when drowsiness detected")
             self.add_param_field(scrollable_frame, "ESP32 IP", "esp32_ip", "192.168.4.1",
                                "ESP32 IP address (default: 192.168.4.1)")
