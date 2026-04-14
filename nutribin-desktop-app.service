@@ -1,0 +1,18 @@
+[Unit]
+Description=NutriBin Desktop App
+After=graphical.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=admin
+WorkingDirectory=/home/admin/NutriBin-MachineLearning/yolo/scripts
+Environment="DISPLAY=:0"
+Environment="XAUTHORITY=/home/admin/.Xauthority"
+ExecStartPre=/bin/sleep 15
+ExecStart=/bin/bash /home/admin/NutriBin-MachineLearning/scripts/start_desktop_app.sh
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=graphical.target

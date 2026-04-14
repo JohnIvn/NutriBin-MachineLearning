@@ -82,6 +82,18 @@ python desktop_app.py
 - Click **"Stop Process"** button
 - Or close the desktop app
 
+### Optional: Auto-start on boot
+If you want the desktop app to open automatically after the Raspberry Pi boots into the desktop session:
+
+```bash
+sudo cp nutribin-desktop-app.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable nutribin-desktop-app.service
+sudo systemctl start nutribin-desktop-app.service
+```
+
+If the display does not appear, make sure the Pi is set to auto-login to the desktop and that `/home/admin/.Xauthority` exists for the `admin` user.
+
 ## Troubleshooting
 
 ### ESP32 Shows Red 🔴
