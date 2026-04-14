@@ -3,6 +3,7 @@ NutriBin ML Desktop Application
 A comprehensive tkinter-based GUI for managing YOLO model workflows
 """
 
+import argparse
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext, filedialog
 from pathlib import Path
@@ -530,8 +531,9 @@ class ParametersDialog(tk.Toplevel):
 
 
 class DesktopApp:
-    def __init__(self, root):
+    def __init__(self, root, startup_config=None):
         self.root = root
+        self.startup_config = startup_config or {}
         self.root.title("Anti Drowsy ML - YOLO Model Manager")
         self.root.geometry("1400x900")
         self.root.resizable(True, True)
@@ -563,6 +565,28 @@ class DesktopApp:
         self.params = {}
         
         self.setup_ui()
+
+        if self.startup_config.get("auto_live_detection"):
+            delay_ms = int(self.startup_config.get("startup_delay_ms", 1200))
+            self.root.after(delay_ms, self._start_auto_live_detection)
+
+    def _start_auto_live_detection(self):
+        """Start Live Detection automatically when requested by startup config."""
+        if self.is_running:
+            return
+
+        params = {
+            "model": self.startup_config.get("model", "best.pt"),
+            "mode": self.startup_config.get("mode", "pytorch"),
+            "camera": str(self.startup_config.get("camera", 0)),
+            "imgsz": str(self.startup_config.get("imgsz", 640)),
+            "conf": str(self.startup_config.get("conf", 0.25)),
+            "device": self.startup_config.get("device", "auto"),
+            "esp32_enable": bool(self.startup_config.get("esp32_enable", True)),
+            "esp32_ip": self.startup_config.get("esp32_ip", "192.168.4.1"),
+        }
+
+        self.run_script("live_test.py", params=params, show_dialog=False)
     
     def setup_ui(self):
         """Setup the main UI layout"""
@@ -923,7 +947,7 @@ class DesktopApp:
             scale -= 0.05
         return 0.3
     
-    def run_script(self, script_name):
+    def run_script(self, script_name, params=None, show_dialog=True):
         """Show parameter dialog and run a script"""
         if self.is_running:
             messagebox.showwarning("In Progress", "A process is already running!")
@@ -935,15 +959,20 @@ class DesktopApp:
             messagebox.showerror("Error", f"Script not found: {script_path}")
             return
         
-        # Show parameters dialog
-        dialog = ParametersDialog(self.root, script_name, self.params)
-        self.root.wait_window(dialog)
-        
-        if dialog.result is None:
-            return  # User cancelled
-        
-        # Extract parameters from dialog
-        params = dialog.result
+        # Show parameters dialog unless parameters were supplied programmatically
+        if params is None and show_dialog:
+            dialog = ParametersDialog(self.root, script_name, self.params)
+            self.root.wait_window(dialog)
+
+            if dialog.result is None:
+                return  # User cancelled
+
+            # Extract parameters from dialog
+            params = dialog.result
+        elif params is None:
+            params = self.params.copy()
+
+        self.params = params
         
         # Always ensure console output is ready
         try:
@@ -1644,8 +1673,37 @@ class DesktopApp:
 
 
 def main():
+    parser = argparse.ArgumentParser(description="NutriBin ML Desktop Application")
+    parser.add_argument("--auto-live-detection", action="store_true", help="Start Live Detection automatically on launch")
+    parser.add_argument("--esp32-enable", action="store_true", help="Enable ESP32 when auto-starting Live Detection")
+    parser.add_argument("--esp32-ip", type=str, default="192.168.4.1", help="ESP32 IP address for Live Detection")
+    parser.add_argument("--camera", type=int, default=0, help="Camera ID for Live Detection")
+    parser.add_argument("--model", type=str, default="best.pt", help="Model path for Live Detection")
+    parser.add_argument("--mode", type=str, default="pytorch", help="Inference mode for Live Detection")
+    parser.add_argument("--conf", type=float, default=0.25, help="Confidence threshold for Live Detection")
+    parser.add_argument("--imgsz", type=int, default=640, help="Image size for Live Detection")
+    parser.add_argument("--device", type=str, default="auto", help="Device for Live Detection")
+    parser.add_argument("--startup-delay-ms", type=int, default=1200, help="Delay before auto-starting Live Detection")
+    args = parser.parse_args()
+
+    auto_live = args.auto_live_detection or os.environ.get("NUTRIBIN_AUTO_LIVE", "0") == "1"
+    esp32_enabled = args.esp32_enable or os.environ.get("NUTRIBIN_ESP32_ENABLE", "1") == "1"
+
+    startup_config = {
+        "auto_live_detection": auto_live,
+        "esp32_enable": esp32_enabled,
+        "esp32_ip": os.environ.get("NUTRIBIN_ESP32_IP", args.esp32_ip),
+        "camera": int(os.environ.get("NUTRIBIN_LIVE_CAMERA", str(args.camera))),
+        "model": os.environ.get("NUTRIBIN_LIVE_MODEL", args.model),
+        "mode": os.environ.get("NUTRIBIN_LIVE_MODE", args.mode),
+        "conf": float(os.environ.get("NUTRIBIN_LIVE_CONF", str(args.conf))),
+        "imgsz": int(os.environ.get("NUTRIBIN_LIVE_IMGSZ", str(args.imgsz))),
+        "device": os.environ.get("NUTRIBIN_LIVE_DEVICE", args.device),
+        "startup_delay_ms": int(os.environ.get("NUTRIBIN_STARTUP_DELAY_MS", str(args.startup_delay_ms))),
+    }
+
     root = tk.Tk()
-    app = DesktopApp(root)
+    app = DesktopApp(root, startup_config=startup_config)
     root.mainloop()
 
 

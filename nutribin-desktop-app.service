@@ -1,20 +1,20 @@
 [Unit]
-Description=NutriBin Desktop App
+Description=NutriBin Desktop App with Auto Live Detection
 After=graphical.target network-online.target
-Wants=network-online.target
-Wants=drowsiness-detection.service
-After=drowsiness-detection.service
+Wants=network-online.target graphical.target
 
 [Service]
 Type=simple
 User=admin
-WorkingDirectory=/home/admin/NutriBin-MachineLearning/yolo/scripts
-Environment="DISPLAY=:0"
-Environment="XAUTHORITY=/home/admin/.Xauthority"
-ExecStartPre=/bin/sleep 15
-ExecStart=/bin/bash /home/admin/NutriBin-MachineLearning/scripts/start_desktop_app.sh
+WorkingDirectory=/home/admin/NutriBin-MachineLearning
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/admin/.Xauthority
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/bin/bash /home/admin/NutriBin-MachineLearning/scripts/start_desktop_app_fixed.sh
 Restart=on-failure
 RestartSec=10
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=graphical.target
