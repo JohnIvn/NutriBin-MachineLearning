@@ -49,6 +49,15 @@ ALERT_THRESHOLD = 1  # Start alerting at EARLY DROWSINESS
 BUZZER_THRESHOLD = 2  # Use buzzer at MODERATE and above
 VIBRATOR_THRESHOLD = 1  # Use vibrator at EARLY and above
 DETECTION_HOLD_SECONDS = 3.0  # Require 3 seconds of continuous detection before alerting
+ESP32_ALERT_MIN_CONFIDENCE = 0.40  # Send ESP32 alert only when confidence is >= 40%
+
+LEVEL_TO_INTENSITY = {
+    1: 20,
+    2: 50,
+    3: 80,
+    4: 100,
+    5: 100,
+}
 
 # Smoothing settings
 SMOOTHING_WINDOW = 5  # Average predictions over last N frames for stability
@@ -113,6 +122,10 @@ class ESP32Controller:
     def send_alert_signal(self):
         """Send a single generic alert signal to the ESP32."""
         return self.send_command("ALERT")
+
+    def send_dual_alert(self, intensity):
+        """Trigger buzzer + vibrator together at the given intensity."""
+        return self.send_command(f"TEST:both:{intensity}")
 
 
 class DrowsinessDetector:
@@ -338,8 +351,14 @@ def main():
                 print(f"  Status: {description}")
                 
                 # Only send the alert signal after the detection has been stable for 3 seconds
-                if hold_duration >= DETECTION_HOLD_SECONDS and not alert_sent_for_hold:
-                    esp32.send_alert_signal()
+                # and confidence is at least 40%
+                if (
+                    confidence >= ESP32_ALERT_MIN_CONFIDENCE
+                    and hold_duration >= DETECTION_HOLD_SECONDS
+                    and not alert_sent_for_hold
+                ):
+                    intensity = LEVEL_TO_INTENSITY.get(current_level, 100)
+                    esp32.send_dual_alert(intensity)
                     alert_sent_for_hold = True
                     last_alert_level = current_level
             else:

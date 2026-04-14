@@ -39,6 +39,15 @@ ALERT_THRESHOLD = 1
 BUZZER_THRESHOLD = 2
 VIBRATOR_THRESHOLD = 1
 SMOOTHING_WINDOW = 5
+ESP32_ALERT_MIN_CONFIDENCE = 0.40
+
+LEVEL_TO_INTENSITY = {
+    1: 20,
+    2: 50,
+    3: 80,
+    4: 100,
+    5: 100,
+}
 
 
 class ESP32Controller:
@@ -101,6 +110,10 @@ class ESP32Controller:
     def send_alert_signal(self):
         """Send a single generic alert signal to the ESP32."""
         return self.send_command("ALERT")
+
+    def send_dual_alert(self, intensity):
+        """Trigger buzzer + vibrator together at the given intensity."""
+        return self.send_command(f"TEST:both:{intensity}")
 
 
 class ParametersDialog(tk.Toplevel):
@@ -1319,8 +1332,15 @@ class DesktopApp:
                             hold_duration = current_time - detection_hold_start
                             
                             # Send alert only after the detection has been stable for 3 seconds
-                            if drowsy_level >= ALERT_THRESHOLD and hold_duration >= 3.0 and not alert_sent_for_hold:
-                                if esp32.send_alert_signal():
+                            # and confidence is at least 40%
+                            if (
+                                drowsy_level >= ALERT_THRESHOLD
+                                and confidence >= ESP32_ALERT_MIN_CONFIDENCE
+                                and hold_duration >= 3.0
+                                and not alert_sent_for_hold
+                            ):
+                                intensity = LEVEL_TO_INTENSITY.get(drowsy_level, 100)
+                                if esp32.send_dual_alert(intensity):
                                     self.log_output(f"🚨 Alert: {class_name} ({confidence:.2f}) - {drowsy_description}", "warning")
                                 
                                 alert_sent_for_hold = True
